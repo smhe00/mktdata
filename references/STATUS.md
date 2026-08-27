@@ -17,7 +17,7 @@
 | `extra` | 量化辅助 | 沪深港通资金/行业板块行情/概念行情/两融 |
 
 ### 数据源（9）
-hithink(同花顺API) / miniQMT(本机xtdata) / TDX(pytdx) / akshare-东财 / akshare-同花顺 / akshare-新浪 / akshare-雪球 / akshare-宏观 / Yahoo直连
+hithink(同花顺API) / miniQMT(本机xtdata) / TDX(easy-tdx) / akshare-东财 / akshare-同花顺 / akshare-新浪 / akshare-雪球 / akshare-宏观 / Yahoo直连
 
 ### 全量回归（33 项，`scripts/test_all.py` 可重跑）
 行情 10 ✓ 跨源一致性 3 ✓（A股日线/5m/港股 三方逐点一致）财务 7 ✓ 估值 4 ✓（PB 三源一致）F10/extra 5 ✓ CLI 4 ✓

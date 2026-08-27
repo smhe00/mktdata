@@ -48,8 +48,8 @@
 
 | 市场 | 数据 | 自动切换链（依次兜底） |
 | --- | --- | --- |
-| A 股 | 日线 | hithink → miniQMT → TDX(pytdx) |
-| A 股 | 分钟(1m/5m/15m/30m/60m) | miniQMT → TDX(pytdx)（双源，已实测 5m 48/48 一致） |
+| A 股 | 日线 | hithink → miniQMT → TDX(easy-tdx) |
+| A 股 | 分钟(1m/5m/15m/30m/60m) | miniQMT → TDX(easy-tdx)（双源，已实测 5m 48/48 一致） |
 | 港股 | 日线 | miniQMT → 新浪(akshare) |
 | 美股 | 日线 | Yahoo 直连 → 新浪(akshare) |
 | A 股 | 财务/估值 | hithink → miniQMT 自算 |

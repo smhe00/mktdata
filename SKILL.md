@@ -14,7 +14,7 @@ description: 当用户或 Agent 需要通过本机 miniQMT（迅投/国金 QMT�
 ## 三数据源策略：hithink 优先，miniQMT 兜底，通达信(tdx)第三方冗余
 
 A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持（港股、分钟线、实时）或调用失败时**自动转 miniQMT 兜底**。此外 mktdata.py 还支持：
-- **通达信 pytdx 第三源**（`--source tdx`，零认证直连通达信服务器）做 A 股行情/PB 三方交叉；
+- **通达信 easy-tdx 第三源**（`--source tdx`，零认证直连通达信服务器，全面替代 pytdx）做 A 股行情/PB/资金流向三方交叉；
 - **新浪港股源**（`--source sina`，akshare `stock_hk_daily`，港股日线与 miniQMT 逐日一致）；
 - **F10 基本面**（`f10` 子命令）：港股财务/估值/公司资料/分红（akshare 东财）+ A股财务摘要（同花顺）——**港股财务由此补上**（hithink/miniQMT/TDX 三源本无港股财务）。
 

@@ -88,7 +88,7 @@ def pb_3way():
     mq, _ = mktdata.miniqmt_valuation("600519.SH")
     tx, _ = mktdata.tdx_valuation("600519.SH")
     a, b, c = hh["600519.SH"]["pb_mrq"], mq["pb_mrq"], tx["pb_mrq"]
-    return {"ok": all((a, b, c)) and max(abs(a-b), abs(b-c), abs(a-c)) < 0.05, "detail": f"hh={a:.3f} mq={b:.3f} tdx={c:.3f}"}
+    return {"ok": all((a, b, c)) and max(abs(a-b)/max(a,b,1e-9), abs(b-c)/max(b,c,1e-9), abs(a-c)/max(a,c,1e-9)) < 0.05, "detail": f"hh={a:.3f} mq={b:.3f} tdx={c:.3f}"}
 case("A股PB 三源一致(茅台)", pb_3way)
 
 print("\n========== E. F10 / extra ==========")

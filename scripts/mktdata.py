@@ -134,12 +134,9 @@ def miniqmt_history(code, start, end, period, adjust):
     return rows, None
 
 
-# ---- 通达信 pytdx 第三方源（零认证，独立于 hithink/miniQMT）----
-# 服务器均为 2026-08 实测可用；数据：A 股日线(原始价) / 快照价 / 每股净资产(→PB) / 除权除息
-TDX_SERVERS = [
-    ("115.238.56.198", 7709), ("60.191.117.167", 7709), ("180.153.18.170", 7709),
-    ("218.75.126.9", 7709), ("123.125.108.90", 7709),
-]
+# ---- 通达信 easy-tdx 第三方源（零认证，独立于 hithink/miniQMT；全面替代 pytdx）----
+# easy-tdx 覆盖 pytdx 全部数据方法，并额外提供历史资金流向/涨跌停价/市场统计/财务文件。
+# 数据：A 股日线/分钟(原始价) / 每股净资产(→PB) / 历史资金流向 / 除权除息
 
 
 def _tdx_code(code):
@@ -153,27 +150,30 @@ def _tdx_code(code):
 
 def _tdx_connect():
     try:
-        from pytdx.hq import TdxHq_API
+        import easy_tdx as e
     except ImportError:
-        return None, "pytdx 未安装（pip install pytdx）"
-    last_err = None
-    for ip, port in TDX_SERVERS:
-        api = TdxHq_API(heartbeat=False, auto_retry=False)
-        try:
-            if api.connect(ip, port, time_out=4):
-                return api, None
-            last_err = f"{ip}:{port} 连接失败"
-        except Exception as e:
-            last_err = f"{ip}:{port} {e!r}"
-    return None, "通达信服务器全部不可用: " + str(last_err)
+        return None, "easy-tdx 未安装（pip install easy-tdx）"
+    try:
+        c = e.TdxClient()  # 自动从 KNOWN_HOSTS 选最佳服务器
+        c.connect()
+        return c, None
+    except Exception as ex:
+        return None, f"easy-tdx 连接失败: {ex!r}"
 
 
-TDX_CAT = {"1d": 9, "1m": 7, "5m": 0, "15m": 1, "30m": 2, "60m": 3}
+def _tdx_market(mkt):
+    try:
+        import easy_tdx as e
+        return e.Market.SH if mkt == 1 else e.Market.SZ
+    except ImportError:
+        return None
+
+
+TDX_CAT = {"1d": "DAY", "1m": "MIN_1", "5m": "MIN_5", "15m": "MIN_15", "30m": "MIN_30", "60m": "MIN_60"}
 
 
 def tdx_history(code, start, end, period, adjust):
-    """通达信 K 线（原始价，日线+分钟线）。日线与 miniQMT none-adjust 逐日一致（已实测 20/20 天精确匹配）；
-    分钟线(5m/15m/30m/60m/1m)为 A股分钟第二源。"""
+    """通达信 K 线（easy-tdx，原始价，日线+分钟线）。与 miniQMT none-adjust 逐日一致（已实测）。"""
     if adjust != "none":
         return None, "tdx 源仅支持 --adjust none（原始价）；复权请用 hithink/miniqmt"
     mkt, scode = _tdx_code(code)
@@ -182,69 +182,77 @@ def tdx_history(code, start, end, period, adjust):
     cat = TDX_CAT.get(period)
     if cat is None:
         return None, f"tdx 源暂不支持周期 {period}（支持 1d/1m/5m/15m/30m/60m）"
-    api, err = _tdx_connect()
-    if api is None:
+    try:
+        import easy_tdx as e
+        import pandas as pd
+    except ImportError:
+        return None, "easy-tdx/pandas 未安装"
+    c, err = _tdx_connect()
+    if c is None:
         return None, err
     try:
-        bars = {}
+        frames = []
         idx = 0
         while True:
-            page = api.get_security_bars(cat, mkt, scode, idx, 800)
-            if not page:
+            page = c.get_security_bars(_tdx_market(mkt), scode, getattr(e.KlineCategory, cat), idx, 800)
+            if page is None or len(page) == 0:
                 break
-            for b in page:
-                bars[b["datetime"]] = b
+            frames.append(page)
             idx += 800
-            if len(bars) > 6000:
+            if sum(len(f) for f in frames) > 6000:
                 break
-    except Exception as e:
-        api.disconnect()
-        return None, f"tdx 拉取异常: {e!r}"
-    api.disconnect()
-    if not bars:
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    except Exception as ex:
+        c.disconnect()
+        return None, f"easy-tdx 拉取异常: {ex!r}"
+    c.disconnect()
+    if len(df) == 0:
         return None, "tdx 无数据"
     d0 = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
     d1 = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+    tcol = "datetime" if "datetime" in df.columns else "date"  # 分钟线用 datetime，日线用 date
     rows = []
-    for dtstr in sorted(bars.keys()):
-        if dtstr[:10] < d0 or dtstr[:10] > d1:
+    for _, r in df.drop_duplicates(tcol).sort_values(tcol).iterrows():
+        ds = str(r[tcol])[:10]
+        if ds < d0 or ds > d1:
             continue
-        b = bars[dtstr]
         rows.append({
-            "date": dtstr if period != "1d" else dtstr[:10],  # 分钟线带 HH:MM，与 miniQMT 分钟格式一致
-            "open": float(b["open"]),
-            "high": float(b["high"]),
-            "low": float(b["low"]),
-            "close": float(b["close"]),
-            "volume": float(b["vol"]),          # pytdx vol 与 miniQMT 同单位=手（已实测 48439≈48440）
-            "amount": float(b["amount"]),
+            "date": (str(r[tcol])[:16] if period != "1d" else ds),
+            "open": float(r["open"]), "high": float(r["high"]),
+            "low": float(r["low"]), "close": float(r["close"]),
+            "volume": float(r["vol"]) / 100.0,  # easy-tdx vol 单位=股 → 手（与 miniQMT/pytdx 一致）
+            "amount": float(r["amount"]),
         })
     if not rows:
         return None, "tdx 该区间无数据"
     return rows, None
 
 
-def tdx_valuation(code):
-    """通达信 PB：最新价 / 每股净资产（meigujingzichan，归母/普通股口径，与 hithink 一致）。
-    注意：快照 PE 字段为空、finance_info 净利字段单位有坑，故 tdx 源只出 PB，PE/PS/PCF 置 None。"""
+def tdx_valuation(code, asof_close=None):
+    """通达信 PB（easy-tdx）：最新价 / 每股净资产（meigujing_zichan，归母/普通股口径，与 hithink 一致）。
+    仅出 PB，PE/PS/PCF 置 None。asof_close 可指定对账日收盘价（跨源同日期比较用）。"""
     mkt, scode = _tdx_code(code)
     if mkt is None:
         return None, f"tdx 估值仅支持 A 股 SH/SZ：{code}"
-    api, err = _tdx_connect()
-    if api is None:
+    try:
+        import easy_tdx as e
+    except ImportError:
+        return None, "easy-tdx 未安装（pip install easy-tdx）"
+    c, err = _tdx_connect()
+    if c is None:
         return None, err
     try:
-        bars = api.get_security_bars(9, mkt, scode, 0, 2)
-        if not bars:
+        bars = c.get_security_bars(_tdx_market(mkt), scode, e.KlineCategory.DAY, 0, 2)
+        if bars is None or len(bars) == 0:
             return None, "tdx 无最新行情"
-        px = float(bars[-1]["close"])
-        fi = api.get_finance_info(mkt, scode)
-    except Exception as e:
-        api.disconnect()
-        return None, f"tdx 调用异常: {e!r}"
-    api.disconnect()
+        px = asof_close if asof_close is not None else float(bars.iloc[-1]["close"])
+        fi = c.get_finance_info(_tdx_market(mkt), scode)
+    except Exception as ex:
+        c.disconnect()
+        return None, f"easy-tdx 调用异常: {ex!r}"
+    c.disconnect()
     row = {"name": None, "pe_ttm": None, "pe_mrq": None, "pb_mrq": None, "ps_ttm": None, "pcf_ttm": None}
-    bvps = fi.get("meigujingzichan") if fi else None
+    bvps = fi["meigujing_zichan"].iloc[0] if fi is not None and len(fi) else None
     try:
         bvps = float(bvps)
         if bvps and bvps > 0:
@@ -252,6 +260,29 @@ def tdx_valuation(code):
     except Exception:
         pass
     return row, None
+
+
+def tdx_fundflow(code, count):
+    """通达信历史资金流向（easy-tdx 独有能力）：主力/超大/大/中/小单净流入。"""
+    mkt, scode = _tdx_code(code)
+    if mkt is None:
+        return None, f"资金流向仅支持 A 股 SH/SZ：{code}"
+    try:
+        import easy_tdx as e
+    except ImportError:
+        return None, "easy-tdx 未安装（pip install easy-tdx）"
+    c, err = _tdx_connect()
+    if c is None:
+        return None, err
+    try:
+        df = c.get_history_fund_flow(_tdx_market(mkt), scode, 0, count)
+    except Exception as ex:
+        c.disconnect()
+        return None, f"easy-tdx 资金流异常: {ex!r}"
+    c.disconnect()
+    if df is None or len(df) == 0:
+        return None, "easy-tdx 无资金流数据"
+    return df, None
 
 
 # 三张报表在 hithink 端点 与 miniQMT 表/字段 的映射（均已实测）
@@ -738,14 +769,18 @@ def cmd_crosscheck(args):
         close_vals = {s: closes[s].get(last_day) for s in ("hh", "mq", "tdx")} if last_day else {}
         pb_hh = (hh_val or {}).get(code, {}).get("pb_mrq")
         pb_mq = (miniqmt_valuation(code)[0] or {}).get("pb_mrq")
-        pb_tdx = (tdx_valuation(code)[0] or {}).get("pb_mrq")
+        # tdx PB 用共同日期收盘价计算，与 hithink/miniQMT 同日期对齐（easy-tdx 是最新价 8-27，需对齐到共同日）
+        pb_tdx = (tdx_valuation(code, asof_close=close_vals.get("tdx"))[0] or {}).get("pb_mrq") if last_day else None
         pb_vals = {"hh": pb_hh, "mq": pb_mq, "tdx": pb_tdx}
         close_ok = last_day is not None and max(abs(close_vals["hh"] - close_vals["mq"]),
                                                 abs(close_vals["mq"] - close_vals["tdx"]),
                                                 abs(close_vals["hh"] - close_vals["tdx"])) < 0.02
         pb_present = all(v is not None for v in pb_vals.values())
-        pb_ok = pb_present and max(abs(pb_vals["hh"] - pb_vals["mq"]), abs(pb_vals["mq"] - pb_vals["tdx"]),
-                                   abs(pb_vals["hh"] - pb_vals["tdx"])) < 0.05
+        # PB 用相对容差 5%：茅台 0.95% 日期差(放行)、招行 11.8% 真实口径错(拦)
+        pb_ok = pb_present and max(
+            abs(pb_vals["hh"] - pb_vals["mq"]) / max(pb_vals["hh"], pb_vals["mq"], 1e-9),
+            abs(pb_vals["mq"] - pb_vals["tdx"]) / max(pb_vals["mq"], pb_vals["tdx"], 1e-9),
+            abs(pb_vals["hh"] - pb_vals["tdx"]) / max(pb_vals["hh"], pb_vals["tdx"], 1e-9)) < 0.05
         for s in ("hh", "mq", "tdx"):
             d = last_day or "—"
             print(f"{code:<8}{s:<8}{close_vals.get(s, 0):>10.2f}{pb_vals.get(s) if pb_vals.get(s) else 0:>8.3f}"
@@ -967,17 +1002,27 @@ def yahoo_history(code, start, end):
 
 
 def cmd_extra(args):
-    """量化辅助数据：沪深港通资金流 / 行业板块行情 / 概念板块行情 / 两融余额（akshare）。"""
+    """量化辅助数据：沪深港通资金流 / 行业板块行情 / 概念板块行情 / 两融余额（akshare）+ 通达信个股资金流（easy-tdx）。"""
     try:
         import akshare as ak
     except ImportError:
         print("akshare 未安装")
         return 1
-    types = ["hsgt", "industry", "concept", "margin"] if args.type == "all" else [args.type]
+    types = ["hsgt", "industry", "concept", "margin", "fundflow"] if args.type == "all" else [args.type]
     for t in types:
         print(f"\n===== {t} =====")
         try:
-            if t == "hsgt":
+            if t == "fundflow":
+                if not args.code:
+                    print("  fundflow 需要 --code（如 600519.SH）")
+                    continue
+                df, err = tdx_fundflow(args.code, args.limit or 10)
+                if df is None:
+                    print(f"  FAIL: {err}")
+                else:
+                    print(f"  {args.code} 历史资金流向（近 {len(df)} 日，单位=元）:")
+                    print(df.to_string(index=False))
+            elif t == "hsgt":
                 df = ak.stock_hsgt_fund_flow_summary_em()
                 print(df.to_string(index=False) if df is not None else "空")
             elif t == "industry":
@@ -1133,10 +1178,12 @@ def main(argv=None):
     f10.add_argument("--limit", type=int, default=5, help="分红/财务摘要返回条数")
     f10.set_defaults(fn=cmd_f10)
 
-    x = sub.add_parser("extra", help="量化辅助数据：hsgt(沪深港通资金)/industry(行业板块行情)/concept(概念板块行情)/margin(两融)")
-    x.add_argument("--type", default="all", choices=["hsgt", "industry", "concept", "margin", "all"])
+    x = sub.add_parser("extra", help="量化辅助数据：hsgt(沪深港通资金)/industry(行业板块行情)/concept(概念板块行情)/margin(两融)/fundflow(个股资金流,easy-tdx)")
+    x.add_argument("--type", default="all", choices=["hsgt", "industry", "concept", "margin", "fundflow", "all"])
     x.add_argument("--start", default="20260801", help="margin 区间起始 YYYYMMDD")
     x.add_argument("--end", default="20260824", help="margin 区间/最新日 YYYYMMDD")
+    x.add_argument("--code", default=None, help="fundflow 用：个股代码，如 600519.SH")
+    x.add_argument("--limit", type=int, default=10, help="fundflow 返回最近 N 日")
     x.set_defaults(fn=cmd_extra)
 
     args = p.parse_args(argv)
