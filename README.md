@@ -58,18 +58,18 @@ mktdata extra --type all              # 量化辅助（资金流/板块/两融�
 qmt connect                           # 单源自检
 ```
 
-等价长命令：`& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' '<此仓库>\scripts\mktdata.py' ...`
-CLI 包装：`C:\Users\peter\AppData\Local\Python\bin\mktdata.cmd` / `qmt.cmd`
+等价长命令：`& '<venv-python>' '<此仓库>\scripts\mktdata.py' ...`
+CLI 包装：`<bin-dir>\mktdata.cmd` / `qmt.cmd`
 
 ## Agent 技能挂载
 
-`C:\Users\peter\.agents\skills\miniqmt` 是一个 **junction**，指向本仓库 `D:\gitee\miniqmt-skill`——
+`<agent-skill-dir>\miniqmt` 是一个 **junction**，指向本仓库 `<repo>`——
 技能目录路径不变（Agent 自动发现不受影响），文件实体在本仓库（可 git 管理、独立推送 GitHub）。
 
 ## 回归测试
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'scripts\test_all.py'
+& '<venv-python>' 'scripts\test_all.py'
 ```
 
 ## 数据源（9 个）

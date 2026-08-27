@@ -42,7 +42,7 @@
 统一入口，输出统一格式（date,open,high,low,close,volume,amount）：
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\mktdata.py' history `
+& '<venv-python>' '<repo>\scripts\mktdata.py' history `
   --codes 00700.HK,600519.SH,AAPL.US --start 20240101 --end 20260824 --adjust back --outdir .\out
 ```
 
@@ -64,7 +64,7 @@
 ## 财务兜底：mktdata.py financial（仅 A 股，三表）
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\mktdata.py' financial `
+& '<venv-python>' '<repo>\scripts\mktdata.py' financial `
   --codes 600519.SH,601318.SH --statement all --period annual --limit 3
 ```
 

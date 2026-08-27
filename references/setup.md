@@ -4,12 +4,12 @@
 
 | 项 | 值 |
 | --- | --- |
-| miniQMT 终端 | 实盘端 `D:\国金证券QMT交易端`（进程 `XtMiniQmt` + `miniquote`）；模拟端 `D:\国金QMT交易端模拟` |
+| miniQMT 终端 | 实盘端 `<qmt-real-terminal>`（进程 `XtMiniQmt` + `miniquote`）；模拟端 `<qmt-sim-terminal>` |
 | 数据服务地址 | `127.0.0.1:58610`（由终端自动提供，无需手动启动） |
 | xtquant 版本 | `xtquant_250516`（venv 内） |
-| Python（带 xtquant） | `D:\gitee\miniQMT\.venv\Scripts\python.exe`（3.12） |
-| 技能脚本 | `D:\gitee\miniqmt-skill\scripts\qmt.py` |
-| 数据目录 | `D:\国金证券QMT交易端\userdata_mini\datadir` |
+| Python（带 xtquant） | `<venv-python>`（3.12） |
+| 技能脚本 | `<repo>\scripts\qmt.py` |
+| 数据目录 | `<qmt-real-terminal>\userdata_mini\datadir` |
 
 ## 连接
 

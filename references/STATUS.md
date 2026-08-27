@@ -41,9 +41,9 @@ mktdata --help                    # 多源数据入口（6 子命令，全自动
 mktdata history --codes 00700.HK,600519.SH,AAPL.US --start 20240101 --end 20260824
 qmt --help                        # 单源查询入口（7 子命令）
 # 全量回归
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\test_all.py'
+& '<venv-python>' '<repo>\scripts\test_all.py'
 ```
-- CLI 包装：`C:\Users\peter\AppData\Local\Python\bin\mktdata.cmd` / `qmt.cmd`（已在 PATH）
+- CLI 包装：`<bin-dir>\mktdata.cmd` / `qmt.cmd`（已在 PATH）
 - 下一步（可选）：把 mktdata 包成 MCP server（stdio / streamable-http），供 MCP 客户端调用
 
 ## 文档导航

@@ -6,8 +6,8 @@ description: 当用户或 Agent 需要通过本机 miniQMT（迅投/国金 QMT�
 # miniQMT 数据查询
 
 > **本机 CLI 已封装**：任何目录下可直接用 `mktdata`（多源入口）与 `qmt`（单源入口）两个命令，
-> 等价于 `& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' '<skill>\scripts\mktdata.py' ...`。
-> 包装在 `C:\Users\peter\AppData\Local\Python\bin\`（已在 PATH）。
+> 等价于 `& '<venv-python>' '<skill>\scripts\mktdata.py' ...`。
+> 包装在 `<bin-dir>\`（已在 PATH）。
 
 本机 **miniQMT 数据服务**（xtquant/xtdata，默认 `127.0.0.1:58610`）的只读数据查询入口。它是本机实时/历史行情源，**支持 A 股与港股**，是 hithink（同花顺）之外补充港股行情的唯一本地通道。例如"腾讯 00700.HK 历史"必须走这里，同花顺不支持港股。
 
@@ -21,12 +21,12 @@ A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持�
 一键入口：
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\mktdata.py' history `
+& '<venv-python>' '<repo>\scripts\mktdata.py' history `
   --codes 00700.HK,600519.SH,601318.SH --start 20240101 --end 20260824 --adjust back --outdir .\out
 
 # 港股第二行情源 / 港股F10财务：
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\mktdata.py' history --codes 00700.HK --source sina --start 20260801 --end 20260824
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\mktdata.py' f10 --codes 00700.HK
+& '<venv-python>' '<repo>\scripts\mktdata.py' history --codes 00700.HK --source sina --start 20260801 --end 20260824
+& '<venv-python>' '<repo>\scripts\mktdata.py' f10 --codes 00700.HK
 ```
 
 路由规则、hithink 失败签名与能力对照详见 `references/fallback.md`；tdx 源能力与验证详见 `references/coverage.md`。也可直接调 `qmt.py`（单源、更多子命令）。
@@ -35,8 +35,8 @@ A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持�
 
 1. **miniQMT 终端在运行**：存在 `XtMiniQmt` 与 `miniquote` 进程（本机：`D:\国金证券QMT交易端` 实盘端 / `D:\国金QMT交易端模拟` 模拟端）。
 2. **xtquant 已安装**：必须用 miniQMT 项目的 venv Python 运行脚本：
-   - Python：`D:\gitee\miniQMT\.venv\Scripts\python.exe`
-   - 技能脚本：`D:\gitee\miniqmt-skill\scripts\qmt.py`
+   - Python：`<venv-python>`
+   - 技能脚本：`<repo>\scripts\qmt.py`
 3. 数据服务端口 `127.0.0.1:58610` 由终端自动提供；脚本 `connect` 即可自检。
 
 ## 直接描述需求
@@ -69,7 +69,7 @@ A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持�
 所有查询统一走：
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\qmt.py' <子命令> ...
+& '<venv-python>' '<repo>\scripts\qmt.py' <子命令> ...
 ```
 
 历史数据流程（脚本内部已封装）：`download_history_data` → `get_market_data_ex`。时间参数用 `YYYYMMDD`。
@@ -102,5 +102,5 @@ A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持�
 `scripts/test_all.py` 全量回归（6 子命令 × 全部源 + 跨源一致性，33 项）：
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\test_all.py'
+& '<venv-python>' '<repo>\scripts\test_all.py'
 ```

@@ -3,7 +3,7 @@
 统一运行方式：
 
 ```powershell
-& 'D:\gitee\miniQMT\.venv\Scripts\python.exe' 'D:\gitee\miniqmt-skill\scripts\qmt.py' <子命令> ...
+& '<venv-python>' '<repo>\scripts\qmt.py' <子命令> ...
 ```
 
 若中文在 PowerShell 控制台显示乱码，属控制台编码（GBK）显示问题，数据本身正确；落盘的 CSV/JSON 均为 UTF-8。可在脚本内已加 `enable_hello=False` 关闭欢迎横幅。
