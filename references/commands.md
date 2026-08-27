@@ -15,7 +15,7 @@
 ```powershell
 ... qmt.py connect
 # OK 已连接本机 miniQMT 数据服务
-#    数据目录: D:\国金证券QMT交易端\userdata_mini\datadir
+#    数据目录: <qmt-real-terminal>\userdata_mini\datadir
 ```
 
 ## history — 历史 K 线

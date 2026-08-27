@@ -33,7 +33,7 @@ A 股日线等 hithink 支持的需求**优先走 hithink**；hithink 不支持�
 
 ## 前置条件（使用前先确认）
 
-1. **miniQMT 终端在运行**：存在 `XtMiniQmt` 与 `miniquote` 进程（本机：`D:\国金证券QMT交易端` 实盘端 / `D:\国金QMT交易端模拟` 模拟端）。
+1. **miniQMT 终端在运行**：存在 `XtMiniQmt` 与 `miniquote` 进程（本机：`<qmt-real-terminal>` 实盘端 / `<qmt-sim-terminal>` 模拟端）。
 2. **xtquant 已安装**：必须用 miniQMT 项目的 venv Python 运行脚本：
    - Python：`<venv-python>`
    - 技能脚本：`<repo>\scripts\qmt.py`
