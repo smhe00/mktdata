@@ -29,6 +29,7 @@ from mktdata.providers.miniqmt import miniqmt_financial, miniqmt_history, miniqm
 from mktdata.providers.tdx import tdx_fundflow, tdx_history, tdx_valuation
 from mktdata.providers.yahoo import yahoo_history
 from mktdata.providers.akshare import ak_f10, ak_hk_history, ak_us_history
+from mktdata.router import execute_financial, execute_history, execute_valuation
 from mktdata.symbols import is_hk
 
 _STMT_LABELS = {
@@ -123,18 +124,11 @@ def cmd_financial(args):
                 out.append({"code": code, "statement": stmt, "status": "ok", "source": source, "report": report, "rows": rows})
                 continue
 
-            if source == "auto":
-                rows, err = hithink_financial(code, stmt, period, limit)
-                if rows is None:
-                    source = "miniqmt(fallback:" + (err or "?")[:40] + ")"
-                    rows, err = miniqmt_financial(code, stmt, period, limit)
-            elif source == "hithink":
-                rows, err = hithink_financial(code, stmt, period, limit)
-            else:
-                rows, err = miniqmt_financial(code, stmt, period, limit)
+            rows, rsrc, fb = execute_financial(code, stmt, period, limit, requested=args.source)
+            source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
             if rows is None:
-                print(f"{code:12s} [{stmt:8s}] FAIL ({source}): {err}")
-                out.append({"code": code, "statement": stmt, "status": "fail", "source": source, "error": err})
+                print(f"{code:12s} [{stmt:8s}] FAIL ({source}): {fb[-1]['reason'] if fb else '无'}")
+                out.append({"code": code, "statement": stmt, "status": "fail", "source": rsrc, "error": fb[-1]['reason'] if fb else "无"})
                 continue
             print(f"{code:12s} [{stmt:8s}] {source:22s} {period} {len(rows)} 期 ({_STMT_LABELS[stmt]}):")
             for r in rows[-limit:]:
@@ -155,60 +149,18 @@ def cmd_financial(args):
 def cmd_valuation(args):
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
     out = []
-    hk = [c for c in codes if is_hk(c)]
-    acodes = [c for c in codes if not is_hk(c)]
-    hh_map, hh_err = None, None
-    if acodes and args.source in ("auto", "hithink"):
-        hh_map, hh_err = hithink_valuation(acodes)
-    if hk:
-        for c in hk:
-            # 港股估值：自动走 akshare 东财 F10 指标估值（PE/PB）
-            f10out, f10err = ak_f10(c, 3)
-            iv = f10out.get("指标估值") if f10out else None
-            if isinstance(iv, dict) and iv.get("PE") is not None:
-                print(f"{c:12s} akshare东财  PE={iv.get('PE')}  PB={iv.get('PB')}  "
-                      f"净利={iv.get('净利润')} 营收={iv.get('营业收入')} ROE={iv.get('ROE%')}%")
-                out.append({"code": c, "status": "ok", "source": "akshare东财",
-                            "name": None, "pe_ttm": iv.get("PE"), "pe_mrq": None,
-                            "pb_mrq": iv.get("PB"), "ps_ttm": None, "pcf_ttm": None})
-            else:
-                print(f"{c:12s} FAIL: 港股估值不可用: {f10err}")
-                out.append({"code": c, "status": "fail", "source": "akshare东财", "error": f10err})
-    for c in acodes:
-        source = args.source
-        if source == "auto":
-            row = (hh_map or {}).get(c)
-            if row:
-                source = "hithink"
-            else:
-                source = "miniqmt(fallback:" + (hh_err or "?")[:40] + ")"
-                row, err = miniqmt_valuation(c)
-                if row is None:
-                    print(f"{c:12s} FAIL ({source}): {err}")
-                    out.append({"code": c, "status": "fail", "source": source, "error": err})
-                    continue
-        elif source == "hithink":
-            row = (hh_map or {}).get(c)
-            if row is None:
-                print(f"{c:12s} FAIL (hithink): {hh_err}")
-                out.append({"code": c, "status": "fail", "source": source, "error": hh_err})
-                continue
-        elif source == "miniqmt":
-            row, err = miniqmt_valuation(c)
-            if row is None:
-                print(f"{c:12s} FAIL (miniqmt): {err}")
-                out.append({"code": c, "status": "fail", "source": source, "error": err})
-                continue
-        elif source == "tdx":
-            row, err = tdx_valuation(c)
-            if row is None:
-                print(f"{c:12s} FAIL (tdx): {err}")
-                out.append({"code": c, "status": "fail", "source": source, "error": err})
-                continue
+    for c in codes:
+        # 路由/fallback 由 router 负责（CN: hithink→miniqmt→tdx；HK: akshare）
+        row, rsrc, fb = execute_valuation(c, requested=args.source)
+        source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
+        if row is None:
+            print(f"{c:12s} FAIL ({source}): {fb[-1]['reason'] if fb else '无'}")
+            out.append({"code": c, "status": "fail", "source": rsrc, "error": fb[-1]['reason'] if fb else "无"})
+            continue
         name = row.get("name") or ""
         print(f"{c:12s} {source:22s} {name}  PE_ttm={row.get('pe_ttm')}  PE_mrq={row.get('pe_mrq')}  "
               f"PB_mrq={row.get('pb_mrq')}  PS_ttm={row.get('ps_ttm')}  PCF_ttm={row.get('pcf_ttm')}")
-        out.append({"code": c, "status": "ok", "source": source, "name": name, **{k: row.get(k) for k in ("pe_ttm", "pe_mrq", "pb_mrq", "ps_ttm", "pcf_ttm")}})
+        out.append({"code": c, "status": "ok", "source": rsrc, "name": name, **{k: row.get(k) for k in ("pe_ttm", "pe_mrq", "pb_mrq", "ps_ttm", "pcf_ttm")}})
     if args.json:
         with open(os.path.abspath(args.json), "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
@@ -350,56 +302,11 @@ def cmd_history(args):
         os.makedirs(outdir, exist_ok=True)
     summary = []
     for code in codes:
-        source = args.source
-        rows, err = None, None
-        if source == "auto":
-            if code.upper().endswith(".US"):
-                source = "yahoo"
-                rows, err = yahoo_history(code, args.start, args.end)
-                if rows is None:
-                    source = "sina(fallback:" + (err or "?")[:40] + ")"
-                    rows, err2 = ak_us_history(code, args.start, args.end)
-                    if rows is None:
-                        err = err2
-            elif is_hk(code):
-                source = "miniqmt"
-                rows, err = miniqmt_history(code, args.start, args.end, period, args.adjust)
-                if rows is None and period == "1d":
-                    source = "sina(fallback:" + (err or "?")[:40] + ")"
-                    rows, err2 = ak_hk_history(code, args.start, args.end)
-                    if rows is None:
-                        err = err2
-            elif period != "1d":
-                source = "miniqmt"
-                rows, err = miniqmt_history(code, args.start, args.end, period, args.adjust)
-                if rows is None:
-                    source = "tdx(fallback:" + (err or "?")[:40] + ")"
-                    rows, err2 = tdx_history(code, args.start, args.end, period, args.adjust)
-                    if rows is None:
-                        err = err2
-            else:
-                rows, err = hithink_history(code, args.start, args.end, args.adjust)
-                if rows is None:
-                    source = "miniqmt(fallback:" + (err or "?")[:40] + ")"
-                    rows, err2 = miniqmt_history(code, args.start, args.end, period, args.adjust)
-                    if rows is None:
-                        err = err2
-                        source = "tdx(fallback:" + (err or "?")[:40] + ")"
-                        rows, err3 = tdx_history(code, args.start, args.end, "1d", args.adjust)
-                        if rows is None:
-                            err = err3
-        elif source == "hithink":
-            rows, err = hithink_history(code, args.start, args.end, args.adjust)
-        elif source == "miniqmt":
-            rows, err = miniqmt_history(code, args.start, args.end, period, args.adjust)
-        elif source == "tdx":
-            rows, err = tdx_history(code, args.start, args.end, period, args.adjust)
-        elif source == "sina":
-            rows, err = ak_hk_history(code, args.start, args.end)
-        elif source == "yahoo":
-            rows, err = yahoo_history(code, args.start, args.end)
-
-        if rows is None:
+        # 路由/fallback 统一由 router 负责（P0-2）
+        res = execute_history(code, args.start, args.end, period, args.adjust, requested=args.source)
+        source = res.source + (f"(fallback:{res.fallback_chain[-1]['reason'][:40]})" if res.fallback_chain else "")
+        rows, err = res.data, res.error
+        if not res.ok or rows is None:
             print(f"{code:12s} FAIL ({source}): {err}")
             summary.append({"code": code, "source": source, "rows": 0, "file": None})
             continue
