@@ -4,7 +4,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import mktdata
 
-PY = r'D:\gitee\miniQMT\.venv\Scripts\python.exe'  # 本机 venv（环境前置条件，可自行调整）
+PY = sys.executable  # 用当前解释器，避免硬编码本机路径（P1-2）
 MKT = os.path.join(HERE, 'mktdata.py')
 results = []
 

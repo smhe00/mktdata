@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mktdata"
+version = "1.1.0"
+description = "多市场、多数据源、自动 fallback 的只读 Market Data Library + CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["mktdata*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
