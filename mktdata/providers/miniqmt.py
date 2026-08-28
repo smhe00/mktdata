@@ -1,14 +1,30 @@
-"""miniQMT（本机 xtquant/xtdata）provider：A 股+港股行情、A 股三表/指标/估值自算。"""
+"""miniQMT（本机 xtquant/xtdata）provider：A 股+港股行情、A 股三表/指标/估值自算、
+交易日历/证券资料/分红除权/板块成分（P0-4：calendar/instrument/... 从 api 移入）。"""
 
 import math
 
-from ..normalize import norm_dt_ymd, norm_num
+from ..errors import (
+    ProviderDataEmpty,
+    ProviderUnavailable,
+    ProviderUnsupported,
+)
+from ..normalize import norm_date_ms, norm_dt_ymd, norm_num
 
 MINIQMT_STMT = {
     "income": ("Income", [("revenue", "revenue"), ("net_profit_excl_min_int_inc", "np_parent")]),
     "balance": ("Balance", [("tot_assets", "assets_total"), ("tot_liab", "total_debt"), ("total_equity", "holder_equity_total")]),
     "cashflow": ("CashFlow", [("net_cash_flows_oper_act", "act_cash_flow_net"), ("net_cash_flows_inv_act", "invest_cash_flow_net"), ("net_cash_flows_fnc_act", "financing_cash_flow_net")]),
 }
+
+
+def _xtdata():
+    try:
+        from xtquant import xtdata
+    except ImportError:
+        raise ProviderUnavailable("xtquant 未安装（需 miniQMT 终端 + venv）")
+    xtdata.enable_hello = False
+    xtdata.connect()
+    return xtdata
 
 
 def _dedup_latest_announce(df):
@@ -20,56 +36,44 @@ def _dedup_latest_announce(df):
 
 
 def miniqmt_history(code, start, end, period, adjust):
-    try:
-        from xtquant import xtdata
-    except ImportError:
-        return None, "xtquant 未安装（需用 miniQMT 项目 venv Python）"
-    xtdata.enable_hello = False
-    xtdata.connect()
+    xtdata = _xtdata()
     try:
         xtdata.download_history_data(code, period=period, start_time=start, end_time=end)
         data = xtdata.get_market_data_ex(
             [], [code], period=period, start_time=start, end_time=end, dividend_type=adjust
         )
     except Exception as e:
-        return None, f"miniQMT 调用异常: {e!r}"
+        raise ProviderUnavailable(f"miniQMT 调用异常: {e!r}")
     df = data.get(code)
     if df is None or len(df) == 0:
-        return None, "miniQMT 无数据"
+        raise ProviderDataEmpty("miniQMT 无数据")
     rows = []
     for t, r in df.iterrows():
-        rows.append(
-            {
-                "date": norm_dt_ymd(int(t)),  # 8位→日期；14位(分钟)→日期+时间
-                "open": float(r["open"]),
-                "high": float(r["high"]),
-                "low": float(r["low"]),
-                "close": float(r["close"]),
-                "volume": float(r["volume"]),
-                "amount": float(r["amount"]),
-            }
-        )
+        rows.append({
+            "date": norm_dt_ymd(int(t)),
+            "open": norm_num(r["open"]),
+            "high": norm_num(r["high"]),
+            "low": norm_num(r["low"]),
+            "close": norm_num(r["close"]),
+            "volume": norm_num(r["volume"]) * 100.0 if norm_num(r["volume"]) is not None else None,  # 手→股（P0-2 shares）
+            "amount": norm_num(r["amount"]),
+        })
     if not rows:
-        return None, "miniQMT 返回空数据"
-    return rows, None
+        raise ProviderDataEmpty("miniQMT 返回空数据")
+    return rows
 
 
 def miniqmt_financial(code, statement, period, limit):
     table, fields = MINIQMT_STMT[statement]
-    try:
-        from xtquant import xtdata
-    except ImportError:
-        return None, "xtquant 未安装（需用 miniQMT 项目 venv Python）"
-    xtdata.enable_hello = False
-    xtdata.connect()
+    xtdata = _xtdata()
     try:
         xtdata.download_financial_data([code], [table])
         res = xtdata.get_financial_data([code], [table], "20000101", "", "report_time")
     except Exception as e:
-        return None, f"miniQMT 调用异常: {e!r}"
+        raise ProviderUnavailable(f"miniQMT 调用异常: {e!r}")
     df = (res.get(code) or {}).get(table)
     if df is None or len(df) == 0:
-        return None, "miniQMT 无该报表数据"
+        raise ProviderDataEmpty("miniQMT 无该报表数据")
     df = _dedup_latest_announce(df)
     if period == "annual":
         df = df[df["m_timetag"].astype(str).str.endswith("1231")]
@@ -87,23 +91,18 @@ def miniqmt_financial(code, statement, period, limit):
             row[out_k] = _num(r.get(src_k))
         rows.append(row)
     if not rows:
-        return None, "miniQMT 无该报表数据"
-    return rows, None
+        raise ProviderDataEmpty("miniQMT 无该报表数据")
+    return rows
 
 
 def miniqmt_indicators(code, fy):
     """miniQMT 无现成指标表，用三张原始报表自算核心指标。"""
-    try:
-        from xtquant import xtdata
-    except ImportError:
-        return None, "xtquant 未安装（需用 miniQMT 项目 venv Python）"
-    xtdata.enable_hello = False
-    xtdata.connect()
+    xtdata = _xtdata()
     try:
         xtdata.download_financial_data([code], ["Income", "Balance", "CashFlow"])
         res = xtdata.get_financial_data([code], ["Income", "Balance", "CashFlow"], "20000101", "", "report_time")
     except Exception as e:
-        return None, f"miniQMT 调用异常: {e!r}"
+        raise ProviderUnavailable(f"miniQMT 调用异常: {e!r}")
 
     def _annual(table):
         df = (res.get(code) or {}).get(table)
@@ -140,35 +139,30 @@ def miniqmt_indicators(code, fy):
         ocf = norm_num(r_c["net_cash_flows_oper_act"])
         rev0 = norm_num(r_i["revenue"])
         out["ocf_to_revenue"] = ocf / rev0 * 100 if (ocf and rev0) else None
-    return out, None
+    return out
 
 
 def miniqmt_valuation(code):
     """miniQMT 无估值接口，用 最新价×总股本 / TTM财报 自算 PE/PB/PS/PCF。"""
-    try:
-        from xtquant import xtdata
-    except ImportError:
-        return None, "xtquant 未安装（需用 miniQMT 项目 venv Python）"
-    xtdata.enable_hello = False
-    xtdata.connect()
+    xtdata = _xtdata()
     try:
         xtdata.download_financial_data([code], ["Income", "Balance", "CashFlow"])
         res = xtdata.get_financial_data([code], ["Income", "Balance", "CashFlow"], "20000101", "", "report_time")
         px_df = xtdata.get_market_data_ex([], [code], period="1d", count=1).get(code)
         det = xtdata.get_instrument_detail(code)
     except Exception as e:
-        return None, f"miniQMT 调用异常: {e!r}"
+        raise ProviderUnavailable(f"miniQMT 调用异常: {e!r}")
     if px_df is None or len(px_df) == 0:
-        return None, "miniQMT 无最新行情"
+        raise ProviderDataEmpty("miniQMT 无最新行情")
     px = float(px_df["close"].iloc[-1])
     sh = det.get("TotalVolume") if det else None
     if not sh:
-        return None, "miniQMT 无总股本"
+        raise ProviderDataEmpty("miniQMT 无总股本")
     inc = (res.get(code) or {}).get("Income")
     bal = (res.get(code) or {}).get("Balance")
     cf = (res.get(code) or {}).get("CashFlow")
     if inc is None or len(inc) == 0:
-        return None, "miniQMT 无财务数据（港股财务不受支持）"
+        raise ProviderUnsupported("miniQMT 无财务数据（港股财务不受支持）")
     inc, bal, cf = _dedup_latest_announce(inc), _dedup_latest_announce(bal), _dedup_latest_announce(cf)
     inc = inc.sort_values("m_timetag")
     L = str(inc["m_timetag"].iloc[-1])
@@ -203,4 +197,53 @@ def miniqmt_valuation(code):
     return {
         "pe_ttm": div(mv, ttm_np), "pe_mrq": div(mv, npY), "pb_mrq": div(mv, gmd),
         "ps_ttm": div(mv, ttm_r), "pcf_ttm": div(mv, ttm_o),
-    }, None
+    }
+
+
+# ---- P0-4：calendar / instrument / corporate_actions / sector 移入 provider ----
+def miniqmt_calendar(market="SH", start="", end="", count=-1):
+    """交易日历（get_trading_dates，毫秒→YYYY-MM-DD）。market: SH/SZ/HK。"""
+    xtdata = _xtdata()
+    try:
+        dates = xtdata.get_trading_dates(market, start_time=start, end_time=end, count=count)
+    except Exception as e:
+        raise ProviderUnavailable(f"miniQMT calendar 失败: {e!r}")
+    if dates is None:
+        raise ProviderDataEmpty("miniQMT calendar 无数据")
+    return [norm_date_ms(d) for d in dates]
+
+
+def miniqmt_instrument(code):
+    """证券基础资料（get_instrument_detail）。"""
+    xtdata = _xtdata()
+    try:
+        det = xtdata.get_instrument_detail(code)
+    except Exception as e:
+        raise ProviderUnavailable(f"miniQMT instrument 失败: {e!r}")
+    if not det:
+        raise ProviderDataEmpty("miniQMT instrument 无数据")
+    return det
+
+
+def miniqmt_corporate_actions(code, start="", end=""):
+    """分红/送转/除权事件流（get_divid_factors）。"""
+    xtdata = _xtdata()
+    try:
+        factors = xtdata.get_divid_factors(code, start_time=start, end_time=end)
+    except Exception as e:
+        raise ProviderUnavailable(f"miniQMT dividends 失败: {e!r}")
+    if factors is None:
+        raise ProviderDataEmpty("miniQMT dividends 无数据")
+    return factors
+
+
+def miniqmt_sector(name):
+    """板块成分（get_stock_list_in_sector），如 '沪深300'/'上证50'。"""
+    xtdata = _xtdata()
+    try:
+        lst = xtdata.get_stock_list_in_sector(name)
+    except Exception as e:
+        raise ProviderUnavailable(f"miniQMT sector 失败: {e!r}")
+    if not lst:
+        raise ProviderDataEmpty(f"miniQMT sector '{name}' 无成分")
+    return lst

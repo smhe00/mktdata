@@ -43,3 +43,26 @@ def to_ms_utc(s: str) -> int:
     return int(
         _dt.datetime(int(s[:4]), int(s[4:6]), int(s[6:8]), tzinfo=_dt.timezone.utc).timestamp() * 1000
     )
+
+
+def normalize_history_rows(rows, symbol, source, period="1d"):
+    """provider 原始行 → canonical history schema（P0-1）。
+
+    输入行含 date/datetime、open/high/low/close/volume/amount（缺失保留 None）；
+    输出 {symbol, datetime, open, high, low, close, volume, amount, source}。
+    datetime：日线 YYYY-MM-DD；分钟 YYYY-MM-DD HH:MM。
+    """
+    out = []
+    for r in rows or []:
+        out.append({
+            "symbol": symbol,
+            "datetime": r.get("datetime", r.get("date")),
+            "open": norm_num(r.get("open")),
+            "high": norm_num(r.get("high")),
+            "low": norm_num(r.get("low")),
+            "close": norm_num(r.get("close")),
+            "volume": norm_num(r.get("volume")),
+            "amount": norm_num(r.get("amount")),
+            "source": source,
+        })
+    return out

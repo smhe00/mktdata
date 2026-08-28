@@ -1,6 +1,7 @@
-"""mktdata 路由 / fallback（P0-2、P1-5 provenance）。
+"""mktdata 路由 / fallback（P0-2、P0-3 error_type、P0-7 requested_source）。
 
-CLI 不再直接写 fallback 逻辑；修改源链只需改本文件（改顺序/增源无需动 CLI）。
+CLI 不再直接写 fallback 逻辑；修改源链只需改本文件。provider 抛结构化异常，
+router 捕获后记录 {source, error_type, reason}，成功结果带真实 requested_source。
 
 用法:
     from mktdata.router import execute_history, resolve_valuation
@@ -11,11 +12,12 @@ CLI 不再直接写 fallback 逻辑；修改源链只需改本文件（改顺序
 from typing import List, Optional, Tuple
 
 from . import providers as P
+from .errors import MktDataError
 from .models import DataResult
+from .normalize import normalize_history_rows
 from .symbols import normalize_symbol
 
 # ---- 源链定义（顺序 = fallback 顺序）----
-# key: (market, period_kind)  / market 见 mktdata.models.Market
 HISTORY_CHAINS = {
     ("CN", "1d"): ["hithink", "miniqmt", "tdx"],
     ("CN", "minute"): ["miniqmt", "tdx"],
@@ -60,6 +62,11 @@ def resolve_crosscheck(market: str) -> List[str]:
     return list(CROSSCHECK_CHAINS.get(market, []))
 
 
+def _err_entry(src: str, e: Exception) -> dict:
+    return {"source": src, "error_type": type(e).__name__, "reason": str(e)[:80]}
+
+
+# ---- 单 provider 调用（失败抛 MktDataError，由 execute_* 捕获）----
 def _call_history(src: str, code: str, start: str, end: str, period: str, adjust: str):
     if src == "hithink":
         return P.hithink_history(code, start, end, adjust)
@@ -71,22 +78,30 @@ def _call_history(src: str, code: str, start: str, end: str, period: str, adjust
         return P.ak_hk_history(code, start, end) if code.upper().endswith(".HK") else P.ak_us_history(code, start, end)
     if src == "yahoo":
         return P.yahoo_history(code, start, end)
-    return None, f"未知源: {src}"
+    raise MktDataError(f"未知源: {src}")
 
 
 def execute_history(code, start, end, period="1d", adjust="none", requested="auto") -> DataResult:
-    """按源链执行 history，返回 DataResult（含 source + fallback_chain）。"""
+    """按源链执行 history；成功返回 canonical schema（symbol/datetime/.../source）。"""
     market = _market_of(code)
     chain = resolve_history(market, period, requested)
     fallback: List[dict] = []
     for src in chain:
-        rows, err = _call_history(src, code, start, end, period, adjust)
-        if rows is not None:
-            return DataResult(data=rows, source=src, ok=True, fallback_chain=fallback or None)
-        fallback.append({"source": src, "reason": (err or "unknown")[:80]})
+        try:
+            rows = _call_history(src, code, start, end, period, adjust)
+        except MktDataError as e:
+            fallback.append(_err_entry(src, e))
+        except Exception as e:
+            fallback.append(_err_entry(src, MktDataError(str(e))))
+        else:
+            return DataResult(
+                data=normalize_history_rows(rows, code, src, period),
+                source=src, ok=True, requested_source=requested, fallback_chain=fallback or None,
+            )
     last = fallback[-1] if fallback else {}
     return DataResult(data=None, source=chain[-1] if chain else "none", ok=False,
-                      error=last.get("reason", "无可用源"), fallback_chain=fallback or None)
+                      error=last.get("reason", "无可用源"),
+                      requested_source=requested, fallback_chain=fallback or None)
 
 
 def _call_financial(src: str, code: str, statement: str, period: str, limit: int):
@@ -96,7 +111,7 @@ def _call_financial(src: str, code: str, statement: str, period: str, limit: int
         return P.miniqmt_financial(code, statement, period, limit)
     if src == "akshare":
         return P.ak_f10(code, limit)  # 港股 F10（statement 忽略）
-    return None, f"未知源: {src}"
+    raise MktDataError(f"未知源: {src}")
 
 
 def execute_financial(code, statement, period="annual", limit=4, requested="auto"):
@@ -105,31 +120,33 @@ def execute_financial(code, statement, period="annual", limit=4, requested="auto
     chain = resolve_financial(market, requested)
     fallback: List[dict] = []
     for src in chain:
-        rows, err = _call_financial(src, code, statement, period, limit)
-        if rows is not None:
+        try:
+            rows = _call_financial(src, code, statement, period, limit)
+        except MktDataError as e:
+            fallback.append(_err_entry(src, e))
+        except Exception as e:
+            fallback.append(_err_entry(src, MktDataError(str(e))))
+        else:
             return rows, src, (fallback or None)
-        fallback.append({"source": src, "reason": (err or "unknown")[:80]})
     return None, (chain[-1] if chain else "none"), (fallback or None)
 
 
 def _call_valuation(src: str, code: str):
     if src == "hithink":
-        m, err = P.hithink_valuation([code])
-        if m is None:
-            return None, err
-        return m.get(code), None
+        m = P.hithink_valuation([code])
+        return m.get(code)
     if src == "miniqmt":
         return P.miniqmt_valuation(code)
     if src == "tdx":
         return P.tdx_valuation(code)
     if src == "akshare":
-        out, err = P.ak_f10(code, 3)
-        iv = out.get("指标估值") if out else None
+        out = P.ak_f10(code, 3)
+        iv = out.get("指标估值")
         if isinstance(iv, dict) and iv.get("PE") is not None:
             return {"name": None, "pe_ttm": iv.get("PE"), "pe_mrq": None,
-                    "pb_mrq": iv.get("PB"), "ps_ttm": None, "pcf_ttm": None}, None
-        return None, err
-    return None, f"未知源: {src}"
+                    "pb_mrq": iv.get("PB"), "ps_ttm": None, "pcf_ttm": None}
+        raise MktDataError("akshare 港股估值不可用")
+    raise MktDataError(f"未知源: {src}")
 
 
 def execute_valuation(code, requested="auto"):
@@ -138,8 +155,14 @@ def execute_valuation(code, requested="auto"):
     chain = resolve_valuation(market, requested)
     fallback: List[dict] = []
     for src in chain:
-        row, err = _call_valuation(src, code)
-        if row is not None:
-            return row, src, (fallback or None)
-        fallback.append({"source": src, "reason": (err or "unknown")[:80]})
+        try:
+            row = _call_valuation(src, code)
+        except MktDataError as e:
+            fallback.append(_err_entry(src, e))
+        except Exception as e:
+            fallback.append(_err_entry(src, MktDataError(str(e))))
+        else:
+            if row is not None:
+                return row, src, (fallback or None)
+            fallback.append(_err_entry(src, MktDataError("空结果")))
     return None, (chain[-1] if chain else "none"), (fallback or None)

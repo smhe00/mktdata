@@ -31,6 +31,7 @@ from mktdata.providers.yahoo import yahoo_history
 from mktdata.providers.akshare import ak_f10, ak_hk_history, ak_us_history
 from mktdata.router import execute_financial, execute_history, execute_valuation
 from mktdata.symbols import is_hk
+from mktdata.errors import MktDataError
 
 _STMT_LABELS = {
     "income": "利润表(营收/归母净利)",
@@ -51,18 +52,18 @@ def _print_ind(period, d):
 
 
 def _latest_fy(code):
-    """最新会计年度（优先 hithink income，失败用 miniQMT）。"""
-    rows, err = hithink_financial(code, "income", "annual", 1)
-    if rows:
-        p = str(rows[0].get("period", ""))
-        m = re.match(r"FY(\d{4})", p)
-        if m:
-            return int(m.group(1))
-    rows2, _ = miniqmt_financial(code, "income", "annual", 1)
-    if rows2:
-        m = re.match(r"(\d{4})", str(rows2[0].get("period", "")))
-        if m:
-            return int(m.group(1))
+    """最新会计年度（优先 hithink income，失败用 miniQMT）。provider 抛异常时跳过。"""
+    from mktdata.errors import MktDataError
+    for src in ("hithink", "miniqmt"):
+        try:
+            rows = (hithink_financial(code, "income", "annual", 1) if src == "hithink"
+                    else miniqmt_financial(code, "income", "annual", 1))
+            if rows:
+                m = re.match(r"FY(\d{4})", str(rows[0].get("period", "")))
+                if m:
+                    return int(m.group(1))
+        except MktDataError:
+            continue
     return None
 
 
@@ -75,10 +76,11 @@ def cmd_financial(args):
     for code in codes:
         if is_hk(code):
             # 港股财务：hithink/miniQMT/TDX 均无 → 自动走 akshare 东财 F10
-            f10out, f10err = ak_f10(code, limit)
-            if f10out is None:
-                print(f"{code:12s} FAIL: 港股财务不可用: {f10err}")
-                out.append({"code": code, "status": "fail", "source": "akshare东财(f10)", "error": f10err})
+            try:
+                f10out = ak_f10(code, limit)
+            except Exception as e:
+                print(f"{code:12s} FAIL: 港股财务不可用: {e}")
+                out.append({"code": code, "status": "fail", "source": "akshare东财(f10)", "error": str(e)})
                 continue
             print(f"{code:12s} akshare东财(f10) 港股财务：")
             iv = f10out.get("指标估值")
@@ -101,35 +103,37 @@ def cmd_financial(args):
                     fy = _latest_fy(code)
                     if not fy:
                         print(f"{code:12s} [indicators] FAIL: 无法确定最新报告期")
-                        out.append({"code": code, "statement": stmt, "status": "fail", "source": source, "error": "no report"})
+                        out.append({"code": code, "statement": stmt, "status": "fail", "source": args.source, "error": "no report"})
                         continue
                     report = f"{fy}-4"
-                rows, err = None, None
-                if source == "auto":
-                    rows, err = hithink_indicators(code, report)
-                    if rows is None:
-                        source = "miniqmt(fallback:" + (err or "?")[:40] + ")"
-                        fy = int(report[:4])
-                        rows, err = miniqmt_indicators(code, fy)
-                elif source == "hithink":
-                    rows, err = hithink_indicators(code, report)
-                else:
-                    rows, err = miniqmt_indicators(code, int(report[:4]))
+                chain = ["hithink", "miniqmt"] if args.source == "auto" else [args.source]
+                rows, rsrc, errmsg = None, None, ""
+                for s in chain:
+                    try:
+                        rows = hithink_indicators(code, report) if s == "hithink" else miniqmt_indicators(code, int(report[:4]))
+                        rsrc = s
+                        break
+                    except MktDataError as e:
+                        rsrc, errmsg = s, str(e)
                 if rows is None:
-                    print(f"{code:12s} [indicators] FAIL ({source}): {err}")
-                    out.append({"code": code, "statement": stmt, "status": "fail", "source": source, "error": err})
+                    print(f"{code:12s} [indicators] FAIL ({rsrc}): {errmsg}")
+                    out.append({"code": code, "statement": stmt, "status": "fail", "source": rsrc, "error": errmsg})
                     continue
-                print(f"{code:12s} [indicators] {source:22s} 报告期 {report}（营收同比/归母同比/毛利率/净利率/ROE/负债率/流动比率/经营现金占营收）:")
+                print(f"{code:12s} [indicators] {rsrc:22s} 报告期 {report}（营收同比/归母同比/毛利率/净利率/ROE/负债率/流动比率/经营现金占营收）:")
                 _print_ind(rows.get("period"), rows)
-                out.append({"code": code, "statement": stmt, "status": "ok", "source": source, "report": report, "rows": rows})
+                out.append({"code": code, "statement": stmt, "status": "ok", "source": rsrc, "report": report, "rows": rows})
                 continue
 
-            rows, rsrc, fb = execute_financial(code, stmt, period, limit, requested=args.source)
-            source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
-            if rows is None:
-                print(f"{code:12s} [{stmt:8s}] FAIL ({source}): {fb[-1]['reason'] if fb else '无'}")
-                out.append({"code": code, "statement": stmt, "status": "fail", "source": rsrc, "error": fb[-1]['reason'] if fb else "无"})
+            # 语句路径：统一走 MarketData（P0-5，CLI 不维护 fallback）
+            try:
+                from mktdata import MarketData
+                res = MarketData().financial(code, stmt, period, limit, source=args.source)
+                rows, rsrc, fb = res.data, res.source, res.fallback_chain
+            except MktDataError as e:
+                print(f"{code:12s} [{stmt:8s}] FAIL: {e}")
+                out.append({"code": code, "statement": stmt, "status": "fail", "source": "auto", "error": str(e)})
                 continue
+            source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
             print(f"{code:12s} [{stmt:8s}] {source:22s} {period} {len(rows)} 期 ({_STMT_LABELS[stmt]}):")
             for r in rows[-limit:]:
                 parts = []
@@ -147,16 +151,20 @@ def cmd_financial(args):
 
 
 def cmd_valuation(args):
+    from mktdata import MarketData
+    md = MarketData()
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
     out = []
     for c in codes:
-        # 路由/fallback 由 router 负责（CN: hithink→miniqmt→tdx；HK: akshare）
-        row, rsrc, fb = execute_valuation(c, requested=args.source)
-        source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
-        if row is None:
-            print(f"{c:12s} FAIL ({source}): {fb[-1]['reason'] if fb else '无'}")
-            out.append({"code": c, "status": "fail", "source": rsrc, "error": fb[-1]['reason'] if fb else "无"})
+        # 统一走 MarketData（P0-5）
+        try:
+            res = md.valuation(c, source=args.source)
+            row, rsrc, fb = res.data, res.source, res.fallback_chain
+        except MktDataError as e:
+            print(f"{c:12s} FAIL: {e}")
+            out.append({"code": c, "status": "fail", "source": "auto", "error": str(e)})
             continue
+        source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
         name = row.get("name") or ""
         print(f"{c:12s} {source:22s} {name}  PE_ttm={row.get('pe_ttm')}  PE_mrq={row.get('pe_mrq')}  "
               f"PB_mrq={row.get('pb_mrq')}  PS_ttm={row.get('ps_ttm')}  PCF_ttm={row.get('pcf_ttm')}")
@@ -169,53 +177,34 @@ def cmd_valuation(args):
 
 
 def cmd_crosscheck(args):
-    """三方交叉验证：hithink / miniQMT / tdx 的收盘价与 PB 一致性（A 股）。"""
+    """三方交叉验证：hithink / miniQMT / tdx 的收盘价与 PB 一致性（A 股，走 MarketData P0-5）。"""
+    from mktdata import MarketData
+    md = MarketData()
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
     acodes = [c for c in codes if not is_hk(c)]
     hk = [c for c in codes if is_hk(c)]
-    hh_val, _ = hithink_valuation(acodes) if acodes else (None, None)
     results = []
     print(f"{'股票':<8}{'源':<8}{'收盘':>10}{'PB':>8}   判定")
-    for code in acodes:
-        closes = {}
-        for src, fn in (("hh", lambda: hithink_history(code, args.start, args.end, "none")),
-                        ("mq", lambda: miniqmt_history(code, args.start, args.end, "1d", "none")),
-                        ("tdx", lambda: tdx_history(code, args.start, args.end, "1d", "none"))):
-            rows, err = fn()
-            closes[src] = {r["date"]: r["close"] for r in rows} if rows else {}
-        # 三源都有的最后一个交易日
-        common = set(closes["hh"]) & set(closes["mq"]) & set(closes["tdx"])
-        last_day = max(common) if common else None
-        close_vals = {s: closes[s].get(last_day) for s in ("hh", "mq", "tdx")} if last_day else {}
-        pb_hh = (hh_val or {}).get(code, {}).get("pb_mrq")
-        pb_mq = (miniqmt_valuation(code)[0] or {}).get("pb_mrq")
-        pb_tdx = (tdx_valuation(code, asof_close=close_vals.get("tdx"))[0] or {}).get("pb_mrq") if last_day else None
-        pb_vals = {"hh": pb_hh, "mq": pb_mq, "tdx": pb_tdx}
-        close_ok = last_day is not None and max(abs(close_vals["hh"] - close_vals["mq"]),
-                                                abs(close_vals["mq"] - close_vals["tdx"]),
-                                                abs(close_vals["hh"] - close_vals["tdx"])) < 0.02
-        pb_present = all(v is not None for v in pb_vals.values())
-        # PB 用相对容差 5%：日期差(放行) vs 真实口径错(拦截)
-        pb_ok = pb_present and max(
-            abs(pb_vals["hh"] - pb_vals["mq"]) / max(pb_vals["hh"], pb_vals["mq"], 1e-9),
-            abs(pb_vals["mq"] - pb_vals["tdx"]) / max(pb_vals["mq"], pb_vals["tdx"], 1e-9),
-            abs(pb_vals["hh"] - pb_vals["tdx"]) / max(pb_vals["hh"], pb_vals["tdx"], 1e-9)) < 0.05
+    for code, r in md.crosscheck(acodes, args.start, args.end).items():
+        d = r["last_day"] or "—"
         for s in ("hh", "mq", "tdx"):
-            d = last_day or "—"
-            print(f"{code:<8}{s:<8}{close_vals.get(s, 0):>10.2f}{pb_vals.get(s) if pb_vals.get(s) else 0:>8.3f}"
+            print(f"{code:<8}{s:<8}{r['closes'].get(s, 0):>10.2f}{r['pb'].get(s) if r['pb'].get(s) else 0:>8.3f}"
                   f"   {d}")
-        print(f"{'':<8}{'':<8}{'':>10}{'':>8}   close {'OK' if close_ok else 'DIFF'} | PB {'OK' if pb_ok else 'DIFF'}")
-        results.append({"code": code, "last_day": last_day, "close": close_vals,
-                        "pb": pb_vals, "close_ok": close_ok, "pb_ok": pb_ok})
+        print(f"{'':<8}{'':<8}{'':>10}{'':>8}   close {'OK' if r['close_ok'] else 'DIFF'} | PB {'OK' if r['pb_ok'] else 'DIFF'}")
+        results.append({"code": code, "last_day": r["last_day"], "close": r["closes"],
+                        "pb": r["pb"], "close_ok": r["close_ok"], "pb_ok": r["pb_ok"]})
     for code in hk:
-        rows, err = miniqmt_history(code, args.start, args.end, "1d", "none")
-        last = rows[-1]["close"] if rows else None
+        try:
+            rows = miniqmt_history(code, args.start, args.end, "1d", "none")
+            last = rows[-1]["close"] if rows else None
+        except MktDataError:
+            last = None
         print(f"{code:<8}miniQMT {last if last else 0:>10.2f}   （港股仅 miniQMT，无 hithink/tdx）")
         results.append({"code": code, "close": {"mq": last}, "note": "HK 仅 miniQMT"})
     n_c = sum(r["close_ok"] for r in results if "close_ok" in r)
     n_p = sum(r["pb_ok"] for r in results if "pb_ok" in r)
     n_all = len([r for r in results if "close_ok" in r])
-    print(f"\n汇总: 收盘三方一致 {n_c}/{n_all} | PB 三方一致(容差0.05) {n_p}/{n_all}")
+    print(f"\n汇总: 收盘三方一致 {n_c}/{n_all} | PB 三方一致(容差5%) {n_p}/{n_all}")
     if args.json:
         with open(os.path.abspath(args.json), "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
@@ -225,9 +214,10 @@ def cmd_crosscheck(args):
 
 def cmd_f10(args):
     for code in [c.strip() for c in args.codes.split(",") if c.strip()]:
-        out, err = ak_f10(code, args.limit)
-        if out is None:
-            print(f"{code:12s} FAIL: {err}")
+        try:
+            out = ak_f10(code, args.limit)
+        except Exception as e:
+            print(f"{code:12s} FAIL: {e}")
             continue
         print(f"\n===== F10: {code} =====")
         for sec, val in out.items():
@@ -260,12 +250,12 @@ def cmd_extra(args):
                 if not args.code:
                     print("  fundflow 需要 --code（如 600519.SH）")
                     continue
-                df, err = tdx_fundflow(args.code, args.limit or 10)
-                if df is None:
-                    print(f"  FAIL: {err}")
-                else:
+                try:
+                    df = tdx_fundflow(args.code, args.limit or 10)
                     print(f"  {args.code} 历史资金流向（近 {len(df)} 日，单位=元）:")
                     print(df.to_string(index=False))
+                except MktDataError as e:
+                    print(f"  FAIL: {e}")
             elif t == "hsgt":
                 df = ak.stock_hsgt_fund_flow_summary_em()
                 print(df.to_string(index=False) if df is not None else "空")
@@ -322,7 +312,7 @@ def cmd_history(args):
                 w.writerows(rows)
         first, last = rows[0], rows[-1]
         print(
-            f"{code:12s} {source:18s} {len(rows):5d} 根  [{first['date']} .. {last['date']}]  "
+            f"{code:12s} {source:18s} {len(rows):5d} 根  [{first['datetime']} .. {last['datetime']}]  "
             f"首收{first['close']:.2f} 末收{last['close']:.2f}" + (f"  -> {path}" if path else "")
         )
         summary.append({"code": code, "source": source, "rows": len(rows), "file": path})

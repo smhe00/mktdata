@@ -51,23 +51,24 @@ class DataResult:
     ok: bool = True
     error: Optional[str] = None
     fallback_chain: Optional[List[Dict[str, str]]] = None
+    requested_source: str = "auto"  # 用户请求的源（P0-7）；缺省 auto
 
     def provenance(self) -> Dict[str, Any]:
         return {
             "source": self.source,
-            "requested_source": "auto",
+            "requested_source": self.requested_source,
             "fallback_chain": self.fallback_chain or [],
         }
 
 
-# history 统一输出字段（canonical schema）
+# history 统一输出字段（canonical schema，P0-1）
 HISTORY_FIELDS = [
     "symbol", "datetime", "open", "high", "low", "close",
     "volume", "amount", "source",
 ]
 
-# 语义约定（P0-6）：
-#   volume: 统一为 shares（股）。provider 在边界转换（如 TDX 原为"手"×100）。
+# 语义约定（P0-2）：
+#   volume: 统一为 shares（股）。provider 在边界转换（miniQMT 原为"手"×100）。
 #   amount: 统一为成交额（本市场货币）。
 #   datetime: 日线 YYYY-MM-DD；分钟 YYYY-MM-DD HH:MM。
 #   缺失值: 用 None / NaN，禁止用 0 顶替缺失行情。

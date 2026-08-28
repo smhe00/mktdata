@@ -1,21 +1,32 @@
 """akshare provider：新浪港股日线 / 新浪美股日线 / 东财·同花顺 F10（港股财务/估值/资料/分红、A股财务摘要）。"""
 
+from ..errors import (
+    ProviderDataEmpty,
+    ProviderUnsupported,
+    ProviderUnavailable,
+)
+from ..normalize import norm_num
 from ..symbols import is_hk
+
+
+def _ak():
+    try:
+        import akshare as ak
+    except ImportError:
+        raise ProviderUnavailable("akshare 未安装")
+    return ak
 
 
 def ak_hk_history(code, start, end):
     if not is_hk(code):
-        return None, "ak 港股行情仅支持 .HK 代码"
-    try:
-        import akshare as ak
-    except ImportError:
-        return None, "akshare 未安装"
+        raise ProviderUnsupported("ak 港股行情仅支持 .HK 代码")
+    ak = _ak()
     try:
         df = ak.stock_hk_daily(symbol=code[:5])
     except Exception as e:
-        return None, f"新浪港股调用异常: {e!r}"
+        raise ProviderUnavailable(f"新浪港股调用异常: {e!r}")
     if df is None or len(df) == 0:
-        return None, "新浪港股无数据"
+        raise ProviderDataEmpty("新浪港股无数据")
     d0 = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
     d1 = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
     rows = []
@@ -24,27 +35,24 @@ def ak_hk_history(code, start, end):
         if date < d0 or date > d1:
             continue
         rows.append({
-            "date": date, "open": float(r["open"]), "high": float(r["high"]),
-            "low": float(r["low"]), "close": float(r["close"]),
-            "volume": float(r["volume"]), "amount": float(r["amount"]),
+            "date": date, "open": norm_num(r["open"]), "high": norm_num(r["high"]),
+            "low": norm_num(r["low"]), "close": norm_num(r["close"]),
+            "volume": norm_num(r["volume"]), "amount": norm_num(r["amount"]),
         })
     if not rows:
-        return None, "新浪港股该区间无数据"
-    return rows, None
+        raise ProviderDataEmpty("新浪港股该区间无数据")
+    return rows
 
 
 def ak_us_history(code, start, end):
     sym = code[:-3] if code.upper().endswith(".US") else code
-    try:
-        import akshare as ak
-    except ImportError:
-        return None, "akshare 未安装"
+    ak = _ak()
     try:
         df = ak.stock_us_daily(symbol=sym)
     except Exception as e:
-        return None, f"akshare 美股调用异常: {e!r}"
+        raise ProviderUnavailable(f"akshare 美股调用异常: {e!r}")
     if df is None or len(df) == 0:
-        return None, "akshare 美股无数据"
+        raise ProviderDataEmpty("akshare 美股无数据")
     d0 = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
     d1 = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
     rows = []
@@ -53,22 +61,19 @@ def ak_us_history(code, start, end):
         if date < d0 or date > d1:
             continue
         rows.append({
-            "date": date, "open": float(r["open"]), "high": float(r["high"]),
-            "low": float(r["low"]), "close": float(r["close"]),
-            "volume": float(r["volume"]), "amount": 0.0,
+            "date": date, "open": norm_num(r["open"]), "high": norm_num(r["high"]),
+            "low": norm_num(r["low"]), "close": norm_num(r["close"]),
+            "volume": norm_num(r["volume"]), "amount": 0.0,
         })
     if not rows:
-        return None, "akshare 美股该区间无数据"
-    return rows, None
+        raise ProviderDataEmpty("akshare 美股该区间无数据")
+    return rows
 
 
 def ak_f10(code, limit):
     """F10 类基本面：港股(东财) 财务指标/估值/公司资料/分红；A股(同花顺) 财务摘要。"""
     u = code.upper()
-    try:
-        import akshare as ak
-    except ImportError:
-        return None, "akshare 未安装"
+    ak = _ak()
     out = {"code": code}
     if u.endswith(".HK"):
         sym = u[:5]
@@ -136,5 +141,5 @@ def ak_f10(code, limit):
         except Exception as e:
             out["财务摘要"] = f"ERR {e!r}"
     else:
-        return None, f"f10 暂只支持 A 股(.SH/.SZ) 与港股(.HK)：{code}"
-    return out, None
+        raise ProviderUnsupported(f"f10 暂只支持 A 股(.SH/.SZ) 与港股(.HK)：{code}")
+    return out
