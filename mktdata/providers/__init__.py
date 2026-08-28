@@ -21,9 +21,13 @@ from .hithink import (  # noqa: F401
 )
 from .miniqmt import (  # noqa: F401
     MINIQMT_STMT,
+    miniqmt_calendar,
+    miniqmt_corporate_actions,
     miniqmt_financial,
     miniqmt_history,
     miniqmt_indicators,
+    miniqmt_instrument,
+    miniqmt_sector,
     miniqmt_valuation,
 )
 from .tdx import tdx_fundflow, tdx_history, tdx_valuation  # noqa: F401

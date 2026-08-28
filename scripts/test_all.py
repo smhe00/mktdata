@@ -39,6 +39,13 @@ case("港股日线 miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_history("007
 case("港股日线 sina", lambda: {"ok": ok_rows(mktdata.ak_hk_history("00700.HK","20260801","20260824"))})
 case("美股日线 yahoo", lambda: {"ok": ok_rows(mktdata.yahoo_history("AAPL.US","20260801","20260821"))})
 case("美股日线 akshare-sina", lambda: {"ok": ok_rows(mktdata.ak_us_history("AAPL.US","20260801","20260821"))})
+# --- 周期/复权补齐 ---
+case("A股1m miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_history("600519.SH","20260820","20260820","1m","none"))})
+case("A股15m tdx", lambda: {"ok": ok_rows(mktdata.tdx_history("600519.SH","20260820","20260820","15m","none"))})
+case("A股30m tdx", lambda: {"ok": ok_rows(mktdata.tdx_history("600519.SH","20260820","20260820","30m","none"))})
+case("A股60m miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_history("600519.SH","20260820","20260820","60m","none"))})
+case("A股日线 front(前复权) hithink", lambda: {"ok": ok_rows(mktdata.hithink_history("600519.SH","20260801","20260824","front"))})
+case("A股日线 front(前复权) miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_history("600519.SH","20260801","20260824","1d","front"))})
 
 print("\n========== B. 跨源一致性（P0-1/P0-2） ==========")
 def tdx_vs_mq_1d():
@@ -79,6 +86,23 @@ def sina_vs_mq_hk():
     return {"ok": len(common) > 0 and len(bad) == 0, "detail": f"共同{len(common)}天 差异{len(bad)}"}
 case("港股日线 sina vs miniqmt", sina_vs_mq_hk)
 
+def cross_pb_ok_and_diff():
+    from mktdata import MarketData
+    md = MarketData()
+    out = {}
+    for code, expect_ok in (("600519.SH", True), ("600036.SH", False)):  # 茅台 PB 一致；招行 miniQMT bank-PB 口径差应被拦
+        r = md.crosscheck([code], "20260818", "20260824")[code]
+        pbs = [v for v in r["pb"].values() if v is not None]
+        rel = 0.0
+        if len(pbs) >= 2:
+            rel = max(abs(a - b) / max(a, b, 1e-9) for i, a in enumerate(pbs) for b in pbs[i + 1:])
+        consistent = r["close_ok"] and r["pb_ok"] == (rel < 0.05) and r["pb_ok"] == expect_ok
+        out[code] = (r["close_ok"], r["pb_ok"], round(rel, 3))
+        if not consistent:
+            return {"ok": False, "detail": f"{code} close_ok={r['close_ok']} pb_ok={r['pb_ok']} rel={rel:.3f} 期望 pb_ok={expect_ok}"}
+    return {"ok": True, "detail": f"茅台 pb_ok={out['600519.SH'][1]} 招行 pb_ok={out['600036.SH'][1]}(DIFF拦截)"}
+case("crosscheck PB 茅台OK/招行DIFF(相对5%)", cross_pb_ok_and_diff)
+
 print("\n========== C. 财务（financial） ==========")
 case("A股利润表 auto(hithink)", lambda: {"ok": ok_rows(mktdata.hithink_financial("600519.SH","income","annual",2))})
 case("A股利润表 miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_financial("600519.SH","income","annual",2))})
@@ -91,6 +115,8 @@ def hk_fin():
     return {"ok": isinstance(out.get("指标估值"), dict) and out["指标估值"].get("PE") is not None,
             "detail": f"PE={out['指标估值'].get('PE') if out else '?'}"}
 case("港股财务 auto(东财F10)", hk_fin)
+case("A股利润表 quarterly miniqmt", lambda: {"ok": ok_rows(mktdata.miniqmt_financial("600519.SH","income","quarterly",2))})
+case("A股指标 hithink 显式report", lambda: {"ok": ok_rows(mktdata.hithink_indicators("600519.SH","2024-4"))})
 
 print("\n========== D. 估值（valuation） ==========")
 case("A股估值 auto(hithink)", lambda: {"ok": ok_rows(mktdata.hithink_valuation(["600519.SH"]))})
@@ -109,6 +135,11 @@ def pb_3way():
     a, b, c = hh["600519.SH"]["pb_mrq"], mq["pb_mrq"], tx["pb_mrq"]
     return {"ok": all((a, b, c)) and max(abs(a-b)/max(a,b,1e-9), abs(b-c)/max(b,c,1e-9), abs(a-c)/max(a,c,1e-9)) < 0.05, "detail": f"hh={a:.3f} mq={b:.3f} tdx={c:.3f}"}
 case("A股PB 三源一致(茅台)", pb_3way)
+def hk_val():
+    out = mktdata.ak_f10("00700.HK", 3)
+    iv = out.get("指标估值") if isinstance(out, dict) else None
+    return {"ok": isinstance(iv, dict) and iv.get("PE") is not None, "detail": f"PE={iv.get('PE') if iv else '?'}"}
+case("港股估值 auto(东财F10)", hk_val)
 
 print("\n========== E. F10 / extra ==========")
 def f10_a():
@@ -134,6 +165,15 @@ def extra_margin():
     df = ak.stock_margin_sse(start_date="20260820", end_date="20260824")
     return {"ok": df is not None and len(df) > 0, "detail": f"{len(df)}天"}
 case("extra 上交所两融", extra_margin)
+def extra_concept():
+    import akshare as ak
+    df = ak.stock_board_concept_summary_ths()
+    return {"ok": df is not None and len(df) > 0, "detail": f"{len(df)}概念"}
+case("extra 概念板块行情", extra_concept)
+def extra_fundflow():
+    df = mktdata.tdx_fundflow("600519.SH", 3)
+    return {"ok": df is not None and len(df) > 0, "detail": f"{len(df)}日"}
+case("extra 个股资金流 easy-tdx", extra_fundflow)
 
 print("\n========== F. CLI 端到端（subprocess） ==========")
 def cli(args):
@@ -143,6 +183,51 @@ case("CLI history auto(三市场)", lambda: {"ok": cli(["history","--codes","600
 case("CLI crosscheck", lambda: {"ok": cli(["crosscheck","--codes","600519.SH,000858.SZ","--start","20260818","--end","20260824"]), "detail": "三方对账"})
 case("CLI f10 港股", lambda: {"ok": cli(["f10","--codes","00700.HK","--limit","1"]), "detail": "F10港股"})
 case("CLI extra all", lambda: {"ok": cli(["extra","--type","all","--start","20260818","--end","20260824"]), "detail": "量化辅助"})
+
+print("\n========== G. MarketData API 实数据（P1 收尾补齐） ==========")
+def api_history_canonical():
+    from mktdata import MarketData
+    res = MarketData().history("600519.SH", "20260818", "20260824")
+    r = res["600519.SH"]
+    row = r.data[0]
+    ok = r.ok and set(row.keys()) == set(mktdata.models.HISTORY_FIELDS) and row["symbol"] == "600519.SH" and row["source"] in ("hithink", "miniqmt", "tdx")
+    return {"ok": ok, "detail": f"source={r.source} n={len(r.data)} datetime={row.get('datetime')}"}
+case("MarketData.history canonical", api_history_canonical)
+def api_financial():
+    from mktdata import MarketData
+    r = MarketData().financial("600519.SH", "income", "annual", 2)
+    return {"ok": r.ok and len(r.data) >= 1, "detail": f"source={r.source} rows={len(r.data)}"}
+case("MarketData.financial income", api_financial)
+def api_indicators():
+    from mktdata import MarketData
+    r = MarketData().indicators("600519.SH")
+    return {"ok": r.ok and r.data.get("period") is not None, "detail": f"source={r.source} period={r.data.get('period')}"}
+case("MarketData.indicators", api_indicators)
+def api_valuation():
+    from mktdata import MarketData
+    r = MarketData().valuation("600519.SH")
+    return {"ok": r.ok and r.data.get("pb_mrq") is not None, "detail": f"source={r.source} PB={r.data.get('pb_mrq')}"}
+case("MarketData.valuation", api_valuation)
+def api_calendar():
+    from mktdata import MarketData
+    r = MarketData().calendar(market="SH", start="20260817", end="20260824")
+    return {"ok": r.ok and len(r.data) > 0, "detail": f"{len(r.data)}交易日"}
+case("MarketData.calendar SH", api_calendar)
+def api_instrument():
+    from mktdata import MarketData
+    r = MarketData().instrument("600519.SH")
+    return {"ok": r.ok and (r.data or {}).get("InstrumentName"), "detail": str((r.data or {}).get("InstrumentName"))}
+case("MarketData.instrument", api_instrument)
+def api_actions():
+    from mktdata import MarketData
+    r = MarketData().corporate_actions("600519.SH", "20260101", "20260824")
+    return {"ok": r.ok and r.data is not None, "detail": f"{len(r.data)}条" if r.data is not None else "空"}
+case("MarketData.corporate_actions", api_actions)
+def api_sector():
+    from mktdata import MarketData
+    r = MarketData().sector("沪深300")
+    return {"ok": r.ok and len(r.data) > 0, "detail": f"{len(r.data)}只"}
+case("MarketData.sector 沪深300", api_sector)
 
 print("\n========== 汇总 ==========")
 passed = sum(1 for _, ok, _ in results if ok)
