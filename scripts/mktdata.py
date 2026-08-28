@@ -148,17 +148,27 @@ def _tdx_code(code):
     return None, None
 
 
+# 已知可用通达信行情服务器（实测；避免 easy-tdx 自动 best-host 在死主机上卡住，P0-3 timeout 健壮性）
+TDX_HOSTS = [
+    "115.238.56.198", "60.191.117.167", "180.153.18.170",
+    "218.75.126.9", "123.125.108.90", "180.153.18.171",
+]
+
+
 def _tdx_connect():
     try:
         import easy_tdx as e
     except ImportError:
         return None, "easy-tdx 未安装（pip install easy-tdx）"
-    try:
-        c = e.TdxClient()  # 自动从 KNOWN_HOSTS 选最佳服务器
-        c.connect()
-        return c, None
-    except Exception as ex:
-        return None, f"easy-tdx 连接失败: {ex!r}"
+    last_err = None
+    for host in TDX_HOSTS:
+        try:
+            c = e.TdxClient(host=host, port=7709, timeout=6)
+            c.connect()
+            return c, None
+        except Exception as ex:
+            last_err = f"{host}:{ex!r}"
+    return None, "easy-tdx 全部服务器不可用: " + str(last_err)
 
 
 def _tdx_market(mkt):
