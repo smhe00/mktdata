@@ -1,7 +1,7 @@
 """mktdata 全量回归测试：6 子命令 × 全部源（行情/财务/估值/F10/extra/CLI）+ 跨源一致性。"""
 import sys, subprocess, json, datetime, os, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))  # 仓库根：import mktdata 解析到包（非 scripts/mktdata.py）
 import mktdata
 
 PY = sys.executable  # 用当前解释器，避免硬编码本机路径（P1-2）
