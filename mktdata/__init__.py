@@ -40,12 +40,14 @@ from .providers.tdx import tdx_fundflow, tdx_history, tdx_valuation  # noqa: F40
 from .providers.yahoo import yahoo_history  # noqa: F401,E402
 from .providers.akshare import ak_f10, ak_hk_history, ak_us_history  # noqa: F401,E402
 from .api import MarketData  # noqa: F401,E402
+from .capabilities import PROVIDER_CAPABILITIES, supports  # noqa: F401,E402
 
 __version__ = "1.1.0"
 
 __all__ = [
     "__version__",
     "MarketData",
+    "PROVIDER_CAPABILITIES", "supports",
     "MktDataError", "InvalidParameter", "InvalidSymbol",
     "ProviderAuthError", "ProviderDataEmpty", "ProviderRateLimited",
     "ProviderUnavailable", "ProviderUnsupported",

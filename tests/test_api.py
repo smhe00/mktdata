@@ -6,6 +6,7 @@ import pytest
 from mktdata import MarketData
 from mktdata import router
 from mktdata.api import _as_list
+from mktdata.errors import InvalidParameter
 from mktdata.models import DataResult
 
 
@@ -58,3 +59,22 @@ def test_valuation_ok(monkeypatch):
     r = md.valuation("600519.SH")
     assert r.data["pe_ttm"] == 20.0
     assert r.source == "miniqmt"
+
+
+def test_api_validation_before_provider(monkeypatch):
+    """P1L-5：非法输入在 provider 之前抛 InvalidParameter，provider 不被调用。"""
+    md = MarketData()
+    called = {"n": 0}
+
+    def fake_execute(code, start, end, period, adjust, requested):
+        called["n"] += 1
+        return DataResult(data=[], source="hithink", ok=True)
+
+    monkeypatch.setattr(router, "execute_history", fake_execute)
+    with pytest.raises(InvalidParameter):
+        md.history("600519.SH", "20260101", "20260201", period="13m")
+    with pytest.raises(InvalidParameter):
+        md.history("600519.SH", "20260201", "20260101")  # start > end
+    with pytest.raises(InvalidParameter):
+        md.history("600519.SH", "20260101", "20260201", source="foo")
+    assert called["n"] == 0  # provider 从未被调用

@@ -15,6 +15,15 @@ from . import providers as P
 from . import router
 from .errors import MktDataError
 from .models import DataResult
+from .symbols import normalize_symbol
+from .validation import (
+    validate_adjust,
+    validate_date,
+    validate_date_range,
+    validate_period,
+    validate_source,
+    validate_statement,
+)
 
 
 def _as_list(codes) -> List[str]:
@@ -30,11 +39,17 @@ class MarketData:
     """
 
     def history(self, codes, start, end, period="1d", adjust="none", source="auto") -> Dict[str, DataResult]:
-        """历史 K 线（canonical schema）。返回 {code: DataResult}。"""
+        """历史 K 线（canonical schema）。返回 {code: DataResult}。参数在 provider 前统一校验（P1L-2）。"""
+        start, end = validate_date_range(start, end)
+        validate_period(period)
+        validate_adjust(adjust)
+        validate_source("history", source)
         return {c: router.execute_history(c, start, end, period, adjust, requested=source) for c in _as_list(codes)}
 
     def financial(self, code, statement="income", period="annual", limit=4, source="auto") -> DataResult:
         """财务报表（A股 hithink→miniqmt；港股走东财 F10）。statement: income/balance/cashflow。"""
+        validate_statement(statement)
+        validate_source("financial", source)
         rows, src, fb = router.execute_financial(code, statement, period, limit, requested=source)
         if rows is None:
             raise MktDataError(f"financial {code} {statement}: 无可用源 ({src})")
@@ -42,6 +57,7 @@ class MarketData:
 
     def indicators(self, code, report=None, source="auto") -> DataResult:
         """财务指标（A股 hithink→miniqmt）。report 缺省自动取最新年报（如 '2025-4'，尊重 forced source）。"""
+        validate_source("indicators", source)
         if not report:
             fy = router.latest_fiscal_year(code, requested=source)
             if not fy:
@@ -54,6 +70,7 @@ class MarketData:
 
     def valuation(self, code, source="auto") -> DataResult:
         """估值快照（A股 hithink→miniqmt→tdx；港股东财）。"""
+        validate_source("valuation", source)
         row, src, fb = router.execute_valuation(code, requested=source)
         if row is None:
             raise MktDataError(f"valuation {code}: 无可用源 ({src})")
@@ -61,6 +78,7 @@ class MarketData:
 
     def crosscheck(self, codes, start, end) -> Dict[str, Dict[str, Any]]:
         """hithink/miniQMT/tdx 三源收盘+PB 一致性对账（P0-6：含 pb_ok，5% 相对容差）。"""
+        start, end = validate_date_range(start, end)
         out: Dict[str, Dict[str, Any]] = {}
         for code in _as_list(codes):
             closes: Dict[str, Dict[str, float]] = {}
@@ -105,17 +123,31 @@ class MarketData:
 
     # ---- 市场基础数据：统一由 provider 实现（P0-4，api 不再直接碰 xtdata）----
     def calendar(self, market="SH", start="", end="", count=-1) -> DataResult:
-        """交易日历（miniQMT）。返回 YYYY-MM-DD 列表。"""
+        """交易日历（miniQMT）。返回 YYYY-MM-DD 列表。market: SH/SZ/HK。"""
+        if market not in ("SH", "SZ", "HK"):
+            raise MktDataError(f"非法 market {market!r}（支持 SH/SZ/HK）")
+        if start:
+            start = validate_date(start, "start")
+        if end:
+            end = validate_date(end, "end")
         return DataResult(data=P.miniqmt_calendar(market, start, end, count), source="miniqmt")
 
     def instrument(self, code) -> DataResult:
         """证券基础资料（miniQMT）。"""
+        normalize_symbol(code)  # 格式校验（InvalidSymbol）
         return DataResult(data=P.miniqmt_instrument(code), source="miniqmt")
 
     def corporate_actions(self, code, start="", end="") -> DataResult:
         """分红/送转/除权事件流（miniQMT）。"""
+        normalize_symbol(code)
+        if start:
+            start = validate_date(start, "start")
+        if end:
+            end = validate_date(end, "end")
         return DataResult(data=P.miniqmt_corporate_actions(code, start, end), source="miniqmt")
 
     def sector(self, name) -> DataResult:
         """板块成分（miniQMT），如 '沪深300'/'上证50'。"""
+        if not name or not isinstance(name, str):
+            raise MktDataError(f"板块名必须是非空字符串，得到 {name!r}")
         return DataResult(data=P.miniqmt_sector(name), source="miniqmt")
