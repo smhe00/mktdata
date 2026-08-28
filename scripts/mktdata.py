@@ -295,15 +295,17 @@ def cmd_extra(args):
 
 
 def cmd_history(args):
+    from mktdata import MarketData
+    md = MarketData()
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
     period = args.period
     outdir = os.path.abspath(args.outdir) if args.outdir else None
     if outdir:
         os.makedirs(outdir, exist_ok=True)
     summary = []
-    for code in codes:
-        # 路由/fallback 统一由 router 负责（P0-2）
-        res = execute_history(code, args.start, args.end, period, args.adjust, requested=args.source)
+    results = md.history(codes, args.start, args.end, period, args.adjust, source=args.source)
+    for code, res in results.items():
+        # 路由/fallback 统一由 MarketData→router 负责（P0-1/P0-2）
         source = res.source + (f"(fallback:{res.fallback_chain[-1]['reason'][:40]})" if res.fallback_chain else "")
         rows, err = res.data, res.error
         if not res.ok or rows is None:
