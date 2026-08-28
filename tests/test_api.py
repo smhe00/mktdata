@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 from mktdata import MarketData
-from mktdata import router
+from mktdata import api, router
 from mktdata.api import _as_list
 from mktdata.errors import InvalidParameter
 from mktdata.models import DataResult
@@ -78,3 +78,35 @@ def test_api_validation_before_provider(monkeypatch):
     with pytest.raises(InvalidParameter):
         md.history("600519.SH", "20260101", "20260201", source="foo")
     assert called["n"] == 0  # provider 从未被调用
+
+
+def test_api_validation_extra(monkeypatch):
+    """P1-lite 第一轮 B 组：calendar/sector/corporate_actions/financial period 非法输入统一 InvalidParameter，provider 不调用。"""
+    md = MarketData()
+    calls = {"n": 0}
+
+    def fake(*a, **k):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(api.P, "miniqmt_calendar", fake)
+    monkeypatch.setattr(api.P, "miniqmt_corporate_actions", fake)
+    monkeypatch.setattr(api.P, "miniqmt_sector", fake)
+    with pytest.raises(InvalidParameter):
+        md.calendar(market="CN")                                  # B1
+    with pytest.raises(InvalidParameter):
+        md.calendar(market="SH", start="20260201", end="20260101")  # B3
+    with pytest.raises(InvalidParameter):
+        md.corporate_actions("600519.SH", start="20260201", end="20260101")  # B4
+    with pytest.raises(InvalidParameter):
+        md.sector("")                                             # B2
+    assert calls["n"] == 0  # provider 均未被调用
+
+    def fake_fin(*a, **k):
+        calls["n"] += 1
+        return [{"period": "FY2025"}], "hithink", None
+
+    monkeypatch.setattr(router, "execute_financial", fake_fin)
+    with pytest.raises(InvalidParameter):
+        md.financial("600519.SH", period="foo")                   # B5
+    assert calls["n"] == 0  # router.execute_financial 未被调用

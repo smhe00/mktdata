@@ -19,7 +19,7 @@ PROVIDER_CAPABILITIES = {
         "financial": {"markets": {"CN"}},
         "indicators": {"markets": {"CN"}},
         "valuation": {"markets": {"CN"}},
-        "calendar": {"markets": {"CN", "HK"}, "note": "CN=SH/SZ"},
+        "calendar": {"markets": {"SH", "SZ", "HK"}},  # 与 MarketData.calendar(market=...) public API 一致
         "instrument": {},
         "corporate_actions": {},
         "sector": {},
@@ -31,9 +31,12 @@ PROVIDER_CAPABILITIES = {
     "yahoo": {
         "history": {"markets": {"US"}, "periods": {"1d"}},
     },
+    "sina": {
+        # 与 public history source="sina" 对齐；底层经 akshare Sina 端点实现
+        "history": {"markets": {"HK", "US"}, "periods": {"1d"}, "note": "via akshare Sina endpoints"},
+    },
     "akshare": {
-        "history": {"markets": {"HK", "US"}, "periods": {"1d"}, "note": "sina 新浪"},
-        "financial": {"markets": {"HK"}, "note": "东财 F10"},
+        "financial": {"markets": {"HK"}, "note": "Eastmoney F10"},
         "valuation": {"markets": {"HK"}},
     },
 }

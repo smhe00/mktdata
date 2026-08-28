@@ -14,6 +14,7 @@ from .errors import InvalidParameter
 VALID_PERIODS = {"1d", "1m", "5m", "15m", "30m", "60m"}
 VALID_ADJUSTS = {"none", "front", "back"}
 VALID_STATEMENTS = {"income", "balance", "cashflow"}
+VALID_FINANCIAL_PERIODS = {"annual", "quarterly"}
 
 VALID_SOURCES = {
     "history": {"auto", "hithink", "miniqmt", "tdx", "sina", "yahoo"},
@@ -77,3 +78,10 @@ def validate_statement(statement):
     if statement is None or statement not in VALID_STATEMENTS:
         raise InvalidParameter(f"非法 statement {statement!r}（支持 income/balance/cashflow）")
     return statement
+
+
+def validate_financial_period(period):
+    """财务报表报告期校验（B5）：仅 annual / quarterly。不要与 history validate_period 混用。"""
+    if period is None or period not in VALID_FINANCIAL_PERIODS:
+        raise InvalidParameter(f"非法 financial period {period!r}（支持 annual/quarterly）")
+    return period

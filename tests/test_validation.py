@@ -65,3 +65,11 @@ def test_validate_statement():
     for bad in ("profit", "assets", "foo", None):
         with pytest.raises(InvalidParameter):
             validation.validate_statement(bad)
+
+
+def test_validate_financial_period():
+    for ok in ("annual", "quarterly"):
+        assert validation.validate_financial_period(ok) == ok
+    for bad in ("foo", "1d", "yearly", None):
+        with pytest.raises(InvalidParameter):
+            validation.validate_financial_period(bad)

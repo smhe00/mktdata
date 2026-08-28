@@ -13,13 +13,14 @@ from typing import Any, Dict, List, Optional, Union
 
 from . import providers as P
 from . import router
-from .errors import MktDataError
+from .errors import InvalidParameter, MktDataError
 from .models import DataResult
 from .symbols import normalize_symbol
 from .validation import (
     validate_adjust,
     validate_date,
     validate_date_range,
+    validate_financial_period,
     validate_period,
     validate_source,
     validate_statement,
@@ -47,8 +48,9 @@ class MarketData:
         return {c: router.execute_history(c, start, end, period, adjust, requested=source) for c in _as_list(codes)}
 
     def financial(self, code, statement="income", period="annual", limit=4, source="auto") -> DataResult:
-        """财务报表（A股 hithink→miniqmt；港股走东财 F10）。statement: income/balance/cashflow。"""
+        """财务报表（A股 hithink→miniqmt；港股走东财 F10）。statement: income/balance/cashflow；period: annual/quarterly。"""
         validate_statement(statement)
+        validate_financial_period(period)
         validate_source("financial", source)
         rows, src, fb = router.execute_financial(code, statement, period, limit, requested=source)
         if rows is None:
@@ -125,29 +127,35 @@ class MarketData:
     def calendar(self, market="SH", start="", end="", count=-1) -> DataResult:
         """交易日历（miniQMT）。返回 YYYY-MM-DD 列表。market: SH/SZ/HK。"""
         if market not in ("SH", "SZ", "HK"):
-            raise MktDataError(f"非法 market {market!r}（支持 SH/SZ/HK）")
-        if start:
-            start = validate_date(start, "start")
-        if end:
-            end = validate_date(end, "end")
+            raise InvalidParameter(f"非法 market {market!r}（支持 SH/SZ/HK）")
+        if start and end:
+            start, end = validate_date_range(start, end)   # B3：双侧时检查 start>end
+        else:
+            if start:
+                start = validate_date(start, "start")
+            if end:
+                end = validate_date(end, "end")
         return DataResult(data=P.miniqmt_calendar(market, start, end, count), source="miniqmt")
 
     def instrument(self, code) -> DataResult:
         """证券基础资料（miniQMT）。"""
-        normalize_symbol(code)  # 格式校验（InvalidSymbol）
+        normalize_symbol(code)  # 格式校验（InvalidSymbol 专用异常）
         return DataResult(data=P.miniqmt_instrument(code), source="miniqmt")
 
     def corporate_actions(self, code, start="", end="") -> DataResult:
         """分红/送转/除权事件流（miniQMT）。"""
         normalize_symbol(code)
-        if start:
-            start = validate_date(start, "start")
-        if end:
-            end = validate_date(end, "end")
+        if start and end:
+            start, end = validate_date_range(start, end)   # B4：双侧时检查 start>end
+        else:
+            if start:
+                start = validate_date(start, "start")
+            if end:
+                end = validate_date(end, "end")
         return DataResult(data=P.miniqmt_corporate_actions(code, start, end), source="miniqmt")
 
     def sector(self, name) -> DataResult:
         """板块成分（miniQMT），如 '沪深300'/'上证50'。"""
-        if not name or not isinstance(name, str):
-            raise MktDataError(f"板块名必须是非空字符串，得到 {name!r}")
+        if not name or not isinstance(name, str) or not name.strip():
+            raise InvalidParameter(f"板块名必须是非空字符串，得到 {name!r}")
         return DataResult(data=P.miniqmt_sector(name), source="miniqmt")

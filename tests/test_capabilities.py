@@ -11,7 +11,21 @@ def test_required_cases():
     assert supports("tdx", "history", market="CN", period="5m") is True
     assert supports("tdx", "history", market="HK", period="1d") is False
     assert supports("yahoo", "history", market="US", period="1d") is True
-    assert supports("miniqmt", "calendar", market="CN") is True
+    # calendar 与 public API (SH/SZ/HK) 一致
+    assert supports("miniqmt", "calendar", market="SH") is True
+    assert supports("miniqmt", "calendar", market="SZ") is True
+    assert supports("miniqmt", "calendar", market="HK") is True
+    assert supports("miniqmt", "calendar", market="CN") is False
+
+
+def test_sina_vs_akshare_history():
+    """A1：sina 承担 HK/US history；akshare 不再承担 history。"""
+    assert supports("sina", "history", market="HK", period="1d") is True
+    assert supports("sina", "history", market="US", period="1d") is True
+    assert supports("akshare", "history", market="HK", period="1d") is False
+    # akshare 保留 HK financial/valuation
+    assert supports("akshare", "financial", market="HK") is True
+    assert supports("akshare", "valuation", market="HK") is True
 
 
 def test_unknown_returns_false():

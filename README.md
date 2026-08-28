@@ -94,7 +94,8 @@ md.history("600519.SH", "20260201", "20260101")                 # → InvalidPar
 | hithink | Yes(1d) | No | No | CN | CN |
 | miniQMT | Yes | Yes | No/视终端 | CN | CN |
 | TDX | Yes(原始) | No | No | No | CN PB |
-| AkShare/Sina | No/辅助 | Yes | Yes | HK F10 | HK |
+| Sina (via AkShare) | No/辅助 | Yes | Yes | No | No |
+| AkShare/Eastmoney | No | No | No | HK F10 | HK |
 | Yahoo | No | No | Yes | No | No |
 
 可编程查询（P1L-4）：
