@@ -51,23 +51,9 @@ def _print_ind(period, d):
     print(line)
 
 
-def _latest_fy(code):
-    """最新会计年度（优先 hithink income，失败用 miniQMT）。provider 抛异常时跳过。"""
-    from mktdata.errors import MktDataError
-    for src in ("hithink", "miniqmt"):
-        try:
-            rows = (hithink_financial(code, "income", "annual", 1) if src == "hithink"
-                    else miniqmt_financial(code, "income", "annual", 1))
-            if rows:
-                m = re.match(r"FY(\d{4})", str(rows[0].get("period", "")))
-                if m:
-                    return int(m.group(1))
-        except MktDataError:
-            continue
-    return None
-
-
 def cmd_financial(args):
+    from mktdata import MarketData
+    md = MarketData()
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
     period = args.period
     limit = args.limit
@@ -98,28 +84,17 @@ def cmd_financial(args):
         for stmt in statements:
             source = args.source
             if stmt == "indicators":
-                report = args.report
-                if not report:
-                    fy = _latest_fy(code)
-                    if not fy:
-                        print(f"{code:12s} [indicators] FAIL: 无法确定最新报告期")
-                        out.append({"code": code, "statement": stmt, "status": "fail", "source": args.source, "error": "no report"})
-                        continue
-                    report = f"{fy}-4"
-                chain = ["hithink", "miniqmt"] if args.source == "auto" else [args.source]
-                rows, rsrc, errmsg = None, None, ""
-                for s in chain:
-                    try:
-                        rows = hithink_indicators(code, report) if s == "hithink" else miniqmt_indicators(code, int(report[:4]))
-                        rsrc = s
-                        break
-                    except MktDataError as e:
-                        rsrc, errmsg = s, str(e)
-                if rows is None:
-                    print(f"{code:12s} [indicators] FAIL ({rsrc}): {errmsg}")
-                    out.append({"code": code, "statement": stmt, "status": "fail", "source": rsrc, "error": errmsg})
+                # B/C 项：fallback 已移入 router；CLI 只做 参数→MarketData→打印
+                try:
+                    res = md.indicators(code, report=args.report, source=args.source)
+                    rows, rsrc, fb = res.data, res.source, res.fallback_chain
+                except MktDataError as e:
+                    print(f"{code:12s} [indicators] FAIL: {e}")
+                    out.append({"code": code, "statement": stmt, "status": "fail", "source": "auto", "error": str(e)})
                     continue
-                print(f"{code:12s} [indicators] {rsrc:22s} 报告期 {report}（营收同比/归母同比/毛利率/净利率/ROE/负债率/流动比率/经营现金占营收）:")
+                source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
+                report = rows.get("period") or args.report
+                print(f"{code:12s} [indicators] {source:22s} 报告期 {report}（营收同比/归母同比/毛利率/净利率/ROE/负债率/流动比率/经营现金占营收）:")
                 _print_ind(rows.get("period"), rows)
                 out.append({"code": code, "statement": stmt, "status": "ok", "source": rsrc, "report": report, "rows": rows})
                 continue

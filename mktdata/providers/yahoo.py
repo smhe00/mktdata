@@ -43,7 +43,7 @@ def yahoo_history(code, start, end):
             "open": norm_num(q["open"][i]), "high": norm_num(q["high"][i]),
             "low": norm_num(q["low"][i]), "close": norm_num(q["close"][i]),
             "volume": norm_num(q["volume"][i]),  # Yahoo volume 原始=股（shares）
-            "amount": 0.0,
+            "amount": None,  # Yahoo chart 无可靠成交额字段 → None（不得伪造成 0，A 项）
         })
     if not rows:
         raise ProviderDataEmpty("yahoo 该区间无数据")

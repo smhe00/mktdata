@@ -1,8 +1,26 @@
 """日期 / 数值归一化工具。"""
 
 import datetime as _dt
+import re
 
 _EPOCH = _dt.datetime(1970, 1, 1)
+
+
+def extract_fiscal_year(period):
+    """从各源 period 标签统一提取会计年度（C 项）。
+
+    支持: FY2025 → 2025；20251231 → 2025；2025-4 → 2025；2025 → 2025。
+    """
+    if period is None:
+        return None
+    s = str(period).strip()
+    m = re.match(r"FY(\d{4})", s)
+    if m:
+        return int(m.group(1))
+    m = re.match(r"^(\d{4})", s)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def norm_date_ymd(x) -> str:

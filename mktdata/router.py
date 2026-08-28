@@ -12,9 +12,9 @@ router 捕获后记录 {source, error_type, reason}，成功结果带真实 requ
 from typing import List, Optional, Tuple
 
 from . import providers as P
-from .errors import MktDataError
+from .errors import MktDataError, ProviderDataEmpty, ProviderUnavailable
 from .models import DataResult
-from .normalize import normalize_history_rows
+from .normalize import extract_fiscal_year, normalize_history_rows
 from .symbols import normalize_symbol
 
 # ---- 源链定义（顺序 = fallback 顺序）----
@@ -27,6 +27,7 @@ HISTORY_CHAINS = {
 FINANCIAL_CHAINS = {"CN": ["hithink", "miniqmt"], "HK": ["akshare"]}
 VALUATION_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"], "HK": ["akshare"]}
 CROSSCHECK_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"]}
+INDICATORS_CHAINS = {"CN": ["hithink", "miniqmt"]}
 
 
 def _period_kind(period: str) -> str:
@@ -60,6 +61,13 @@ def resolve_valuation(market: str, requested: str = "auto") -> List[str]:
 
 def resolve_crosscheck(market: str) -> List[str]:
     return list(CROSSCHECK_CHAINS.get(market, []))
+
+
+def resolve_indicators(market: str, requested: str = "auto") -> List[str]:
+    chain = list(INDICATORS_CHAINS.get(market, []))
+    if requested and requested != "auto":
+        return [requested]
+    return chain
 
 
 def _err_entry(src: str, e: Exception) -> dict:
@@ -110,7 +118,14 @@ def _call_financial(src: str, code: str, statement: str, period: str, limit: int
     if src == "miniqmt":
         return P.miniqmt_financial(code, statement, period, limit)
     if src == "akshare":
-        return P.ak_f10(code, limit)  # 港股 F10（statement 忽略）
+        out = P.ak_f10(code, limit)  # 港股 F10（statement 忽略）
+        # E 项最小防护：F10 内部 ERR 字符串不能当作成功
+        stmts = out.get("三大报表") if isinstance(out, dict) else None
+        if isinstance(stmts, str) and str(stmts).startswith("ERR "):
+            raise ProviderUnavailable(str(stmts))
+        if not (out.get("指标估值") or out.get("三大报表") or out.get("财务摘要")):
+            raise ProviderDataEmpty("港股 F10 无可信数据")
+        return out
     raise MktDataError(f"未知源: {src}")
 
 
@@ -166,3 +181,46 @@ def execute_valuation(code, requested="auto"):
                 return row, src, (fallback or None)
             fallback.append(_err_entry(src, MktDataError("空结果")))
     return None, (chain[-1] if chain else "none"), (fallback or None)
+
+
+# ---- 财务指标（B/C 项：fallback 从 CLI 移入 router）----
+def _call_indicators(src: str, code: str, report: str):
+    if src == "hithink":
+        return P.hithink_indicators(code, report)
+    if src == "miniqmt":
+        fy = extract_fiscal_year(report)
+        return P.miniqmt_indicators(code, fy)
+    raise MktDataError(f"未知源: {src}")
+
+
+def execute_indicators(code, report, requested="auto"):
+    """按源链执行财务指标（A股 hithink→miniqmt）；返回 (row_dict, source, fallback_chain)。"""
+    market = _market_of(code)
+    chain = resolve_indicators(market, requested)
+    fallback: List[dict] = []
+    for src in chain:
+        try:
+            row = _call_indicators(src, code, report)
+        except MktDataError as e:
+            fallback.append(_err_entry(src, e))
+        except Exception as e:
+            fallback.append(_err_entry(src, MktDataError(str(e))))
+        else:
+            if row is not None:
+                return row, src, (fallback or None)
+    return None, (chain[-1] if chain else "none"), (fallback or None)
+
+
+def latest_fiscal_year(code) -> Optional[int]:
+    """最新会计年度：优先 hithink income 年报，失败用 miniQMT（FY 解析统一走 normalize）。"""
+    for src in ("hithink", "miniqmt"):
+        try:
+            rows = (P.hithink_financial(code, "income", "annual", 1) if src == "hithink"
+                    else P.miniqmt_financial(code, "income", "annual", 1))
+            if rows:
+                fy = extract_fiscal_year(rows[0].get("period"))
+                if fy:
+                    return fy
+        except MktDataError:
+            continue
+    return None

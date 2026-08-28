@@ -40,6 +40,18 @@ class MarketData:
             raise MktDataError(f"financial {code} {statement}: 无可用源 ({src})")
         return DataResult(data=rows, source=src, ok=True, requested_source=source, fallback_chain=fb)
 
+    def indicators(self, code, report=None, source="auto") -> DataResult:
+        """财务指标（A股 hithink→miniqmt）。report 缺省自动取最新年报（如 '2025-4'）。"""
+        if not report:
+            fy = router.latest_fiscal_year(code)
+            if not fy:
+                raise MktDataError(f"indicators {code}: 无法确定最新报告期")
+            report = f"{fy}-4"
+        row, src, fb = router.execute_indicators(code, report, requested=source)
+        if row is None:
+            raise MktDataError(f"indicators {code}: 无可用源 ({src})")
+        return DataResult(data=row, source=src, ok=True, requested_source=source, fallback_chain=fb)
+
     def valuation(self, code, source="auto") -> DataResult:
         """估值快照（A股 hithink→miniqmt→tdx；港股东财）。"""
         row, src, fb = router.execute_valuation(code, requested=source)

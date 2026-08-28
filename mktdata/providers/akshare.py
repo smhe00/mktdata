@@ -63,7 +63,7 @@ def ak_us_history(code, start, end):
         rows.append({
             "date": date, "open": norm_num(r["open"]), "high": norm_num(r["high"]),
             "low": norm_num(r["low"]), "close": norm_num(r["close"]),
-            "volume": norm_num(r["volume"]), "amount": 0.0,
+            "volume": norm_num(r["volume"]), "amount": None,  # 新浪美股无可靠成交额 → None（A 项）
         })
     if not rows:
         raise ProviderDataEmpty("akshare 美股该区间无数据")
