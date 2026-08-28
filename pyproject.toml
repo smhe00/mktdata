@@ -8,6 +8,14 @@ version = "1.1.0"
 description = "多市场、多数据源、自动 fallback 的只读 Market Data Library + CLI"
 readme = "README.md"
 requires-python = ">=3.10"
+# core 无强制依赖：所有 provider 依赖均为惰性导入（缺失时该 provider 不可用，不影响包导入）
+
+[project.optional-dependencies]
+public = ["akshare", "easy-tdx", "pandas"]  # 公开数据源（新浪/东财/TDX）
+dev = ["pytest"]
+
+[project.scripts]
+mktdata = "mktdata.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["mktdata*"]

@@ -1,5 +1,4 @@
 """P0 contract tests（P0-8 + 二/三轮）：canonical schema / missing value / error propagation / requested_source / pb_ok / fiscal year / HK ERR / HK target statement / indicators forced source。"""
-import importlib.util
 import os
 import sys
 import types
@@ -159,11 +158,8 @@ def test_hk_financial_err_not_success(monkeypatch):
 # ---- 第三轮（P0 最终收口）----
 
 def _load_cli():
-    spec = importlib.util.spec_from_file_location(
-        "_mktdata_cli_test", os.path.join(os.path.dirname(__file__), "..", "scripts", "mktdata.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import mktdata.cli as cli  # R1：CLI 逻辑已移入包内模块
+    return cli
 
 
 def test_hk_financial_cli_uses_marketdata(monkeypatch):
