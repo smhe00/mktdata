@@ -1,4 +1,4 @@
-# miniqmt-skill — miniQMT 多源数据查询技能
+# mktdata — miniQMT 多源数据查询技能
 
 > 本机 miniQMT（迅投/国金 xtquant/xtdata）**多源数据查询**技能包：hithink 优先、miniQMT 兜底，
 > 通达信/新浪/Yahoo/东财依次补位，全自动路由。已封板 v1.0（33/33 回归通过）。
@@ -6,7 +6,7 @@
 ## 结构
 
 ```
-miniqmt-skill/
+mktdata/
 ├── SKILL.md                  # 技能主入口（Agent 说明书）
 ├── references/
 │   ├── STATUS.md             # 封板记录（v1.0，能力/边界清单）
