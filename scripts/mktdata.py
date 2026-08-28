@@ -60,31 +60,13 @@ def cmd_financial(args):
     statements = ["income", "balance", "cashflow", "indicators"] if args.statement == "all" else [args.statement]
     out = []
     for code in codes:
-        if is_hk(code):
-            # 港股财务：hithink/miniQMT/TDX 均无 → 自动走 akshare 东财 F10
-            try:
-                f10out = ak_f10(code, limit)
-            except Exception as e:
-                print(f"{code:12s} FAIL: 港股财务不可用: {e}")
-                out.append({"code": code, "status": "fail", "source": "akshare东财(f10)", "error": str(e)})
-                continue
-            print(f"{code:12s} akshare东财(f10) 港股财务：")
-            iv = f10out.get("指标估值")
-            if isinstance(iv, dict):
-                for k, v in iv.items():
-                    if v is not None:
-                        print(f"    {k} = {v}")
-            stmts = f10out.get("三大报表")
-            if isinstance(stmts, dict):
-                for k, v in stmts.items():
-                    print(f"    {k}: {v}")
-            out.append({"code": code, "statement": "hk-financial", "status": "ok", "source": "akshare东财(f10)",
-                        "rows": {"指标估值": iv, "三大报表": stmts}})
-            continue
         for stmt in statements:
-            source = args.source
             if stmt == "indicators":
-                # B/C 项：fallback 已移入 router；CLI 只做 参数→MarketData→打印
+                if is_hk(code):
+                    print(f"{code:12s} [indicators] 港股无财务指标（仅东财 F10 三表/估值）")
+                    out.append({"code": code, "statement": stmt, "status": "fail", "source": "akshare", "error": "HK 无 indicators"})
+                    continue
+                # Blocker C：fallback/FY 解析都在 MarketData→router；CLI 只做 参数→打印
                 try:
                     res = md.indicators(code, report=args.report, source=args.source)
                     rows, rsrc, fb = res.data, res.source, res.fallback_chain
@@ -99,16 +81,32 @@ def cmd_financial(args):
                 out.append({"code": code, "statement": stmt, "status": "ok", "source": rsrc, "report": report, "rows": rows})
                 continue
 
-            # 语句路径：统一走 MarketData（P0-5，CLI 不维护 fallback）
+            # income/balance/cashflow：CN+HK 统一走 MarketData（Blocker A：删除港股 ak_f10 early branch）
             try:
-                from mktdata import MarketData
-                res = MarketData().financial(code, stmt, period, limit, source=args.source)
+                res = md.financial(code, stmt, period, limit, source=args.source)
                 rows, rsrc, fb = res.data, res.source, res.fallback_chain
             except MktDataError as e:
                 print(f"{code:12s} [{stmt:8s}] FAIL: {e}")
                 out.append({"code": code, "statement": stmt, "status": "fail", "source": "auto", "error": str(e)})
                 continue
             source = rsrc + (f"(fallback:{fb[-1]['reason'][:40]})" if fb else "")
+            if rsrc == "akshare":
+                # 港股 F10 formatter（按请求 statement 展示对应报表；取数/错误判断已在 MarketData→router）
+                print(f"{code:12s} [{stmt:8s}] {source:22s} 港股财务(东财F10)：")
+                iv = rows.get("指标估值") if isinstance(rows, dict) else None
+                if isinstance(iv, dict):
+                    for k, v in iv.items():
+                        if v is not None:
+                            print(f"    {k} = {v}")
+                stmts = rows.get("三大报表") if isinstance(rows, dict) else None
+                if isinstance(stmts, dict):
+                    prefix = {"income": "利润表", "balance": "资产负债表", "cashflow": "现金流量表"}.get(stmt)
+                    for k, v in stmts.items():
+                        if prefix and not str(k).startswith(prefix):
+                            continue
+                        print(f"    {k}: {v}")
+                out.append({"code": code, "statement": stmt, "status": "ok", "source": rsrc, "rows": rows})
+                continue
             print(f"{code:12s} [{stmt:8s}] {source:22s} {period} {len(rows)} 期 ({_STMT_LABELS[stmt]}):")
             for r in rows[-limit:]:
                 parts = []

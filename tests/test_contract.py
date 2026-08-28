@@ -1,5 +1,9 @@
-"""P0 contract tests（P0-8 + 第二轮）：canonical schema / missing value / error propagation / requested_source / pb_ok / fiscal year / HK ERR。"""
-import sys, os
+"""P0 contract tests（P0-8 + 二/三轮）：canonical schema / missing value / error propagation / requested_source / pb_ok / fiscal year / HK ERR / HK target statement / indicators forced source。"""
+import importlib.util
+import os
+import sys
+import types
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -123,7 +127,7 @@ def test_indicators_fallback_in_router(monkeypatch):
     assert fb[0]["source"] == "hithink"
     # MarketData.indicators 走同一 router
     md = api.MarketData()
-    monkeypatch.setattr(router, "latest_fiscal_year", lambda code: 2025)
+    monkeypatch.setattr(router, "latest_fiscal_year", lambda code, requested="auto": 2025)
     r = md.indicators("600519.SH")
     assert r.source == "miniqmt"
     assert r.data["period"] == "FY2025"
@@ -150,3 +154,107 @@ def test_hk_financial_err_not_success(monkeypatch):
     monkeypatch.setattr(api.P, "ak_f10", lambda code, limit: {"code": code})
     with pytest.raises(ProviderDataEmpty):
         router._call_financial("akshare", "00700.HK", "income", "annual", 4)
+
+
+# ---- 第三轮（P0 最终收口）----
+
+def _load_cli():
+    spec = importlib.util.spec_from_file_location(
+        "_mktdata_cli_test", os.path.join(os.path.dirname(__file__), "..", "scripts", "mktdata.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_hk_financial_cli_uses_marketdata(monkeypatch):
+    """8.1：港股 financial CLI 核心路径走 MarketData.financial，不再直接 ak_f10。"""
+    cli = _load_cli()
+    calls = []
+
+    class FakeRes:
+        source = "akshare"
+        data = {"指标估值": {"PE": 15.0}, "三大报表": {"利润表(2025)": {"营业额": 100}}}
+        fallback_chain = None
+
+    def fake_financial(self, code, statement, period="annual", limit=4, source="auto"):
+        calls.append((code, statement))
+        return FakeRes()
+
+    monkeypatch.setattr(api.MarketData, "financial", fake_financial)
+    args = types.SimpleNamespace(codes="00700.HK", statement="income", period="annual",
+                                 limit=2, source="auto", json=None, report=None)
+    cli.cmd_financial(args)
+    assert calls == [("00700.HK", "income")]
+
+
+def test_hk_target_statement_validation(monkeypatch):
+    """8.2：港股按请求的目标 statement 验证对应报表存在。"""
+    def mk(stmts):
+        return {"code": "00700.HK", "三大报表": stmts}
+    # Case 1: income 存在 → 不抛
+    monkeypatch.setattr(api.P, "ak_f10", lambda code, limit: mk({"利润表(2025)": {"营业额": 100}}))
+    out = router._call_financial("akshare", "00700.HK", "income", "annual", 4)
+    assert out["三大报表"]["利润表(2025)"]["营业额"] == 100
+    # Case 2: income 不存在（只有资产负债表）→ ProviderDataEmpty
+    monkeypatch.setattr(api.P, "ak_f10", lambda code, limit: mk({"资产负债表(2025)": {"总资产": 1}}))
+    with pytest.raises(ProviderDataEmpty):
+        router._call_financial("akshare", "00700.HK", "income", "annual", 4)
+    # Case 3: 三大报表 = "ERR boom" → ProviderUnavailable
+    monkeypatch.setattr(api.P, "ak_f10", lambda code, limit: {"code": "00700.HK", "三大报表": "ERR boom"})
+    with pytest.raises(ProviderUnavailable):
+        router._call_financial("akshare", "00700.HK", "income", "annual", 4)
+
+
+def test_indicators_forced_source_fy_phase(monkeypatch):
+    """8.3：indicators 强制源在自动确定 FY 阶段也严格生效。"""
+    calls = {"hh_fin": 0, "mq_fin": 0}
+
+    def fake_hh_fin(code, statement, period, limit):
+        calls["hh_fin"] += 1
+        return [{"period": "FY2025", "revenue": 1}]
+
+    def fake_mq_fin(code, statement, period, limit):
+        calls["mq_fin"] += 1
+        return [{"period": "20251231", "revenue": 1}]
+
+    monkeypatch.setattr(router.P, "hithink_financial", fake_hh_fin)
+    monkeypatch.setattr(router.P, "miniqmt_financial", fake_mq_fin)
+    md = api.MarketData()
+
+    # Case 1: source=miniqmt → FY 阶段只碰 miniQMT
+    def fake_call_miniqmt(src, code, report):
+        assert src == "miniqmt"
+        return {"period": "FY2025", "roe": 20.0}
+    monkeypatch.setattr(router, "_call_indicators", fake_call_miniqmt)
+    calls["hh_fin"] = 0; calls["mq_fin"] = 0
+    r = md.indicators("600519.SH", report=None, source="miniqmt")
+    assert calls["hh_fin"] == 0
+    assert calls["mq_fin"] == 1
+    assert r.source == "miniqmt"
+
+    # Case 2: source=hithink → FY 阶段不碰 miniQMT
+    def fake_call_hithink(src, code, report):
+        assert src == "hithink"
+        return {"period": "FY2025", "roe": 20.0}
+    monkeypatch.setattr(router, "_call_indicators", fake_call_hithink)
+    calls["hh_fin"] = 0; calls["mq_fin"] = 0
+    r2 = md.indicators("600519.SH", report=None, source="hithink")
+    assert calls["mq_fin"] == 0
+    assert calls["hh_fin"] == 1
+    assert r2.source == "hithink"
+
+    # Case 3: source=auto → hithink 失败回 miniQMT
+    def fake_hh_fail(code, statement, period, limit):
+        calls["hh_fin"] += 1
+        raise ProviderUnavailable("hithink 挂")
+    monkeypatch.setattr(router.P, "hithink_financial", fake_hh_fail)
+
+    def fake_call_auto(src, code, report):
+        if src == "hithink":
+            raise ProviderUnavailable("hithink 挂")
+        return {"period": "FY2025", "roe": 20.0}
+    monkeypatch.setattr(router, "_call_indicators", fake_call_auto)
+    calls["hh_fin"] = 0; calls["mq_fin"] = 0
+    r3 = md.indicators("600519.SH", report=None, source="auto")
+    assert calls["hh_fin"] >= 1 and calls["mq_fin"] >= 1
+    assert r3.source == "miniqmt"

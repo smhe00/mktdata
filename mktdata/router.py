@@ -29,6 +29,13 @@ VALUATION_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"], "HK": ["akshare"]}
 CROSSCHECK_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"]}
 INDICATORS_CHAINS = {"CN": ["hithink", "miniqmt"]}
 
+# 港股 F10「三大报表」键前缀 → 目标 statement（Blocker B）
+HK_STATEMENT_PREFIX = {
+    "income": "利润表(",
+    "balance": "资产负债表(",
+    "cashflow": "现金流量表(",
+}
+
 
 def _period_kind(period: str) -> str:
     return "minute" if period and period != "1d" else "1d"
@@ -118,12 +125,20 @@ def _call_financial(src: str, code: str, statement: str, period: str, limit: int
     if src == "miniqmt":
         return P.miniqmt_financial(code, statement, period, limit)
     if src == "akshare":
-        out = P.ak_f10(code, limit)  # 港股 F10（statement 忽略）
-        # E 项最小防护：F10 内部 ERR 字符串不能当作成功
-        stmts = out.get("三大报表") if isinstance(out, dict) else None
+        out = P.ak_f10(code, limit)  # 港股 F10（statement 用于按目标表验证）
+        if not isinstance(out, dict):
+            raise ProviderDataEmpty("港股 F10 无数据")
+        stmts = out.get("三大报表")
         if isinstance(stmts, str) and str(stmts).startswith("ERR "):
             raise ProviderUnavailable(str(stmts))
-        if not (out.get("指标估值") or out.get("三大报表") or out.get("财务摘要")):
+        # B 项：按请求的目标 statement 验证对应报表真实存在（防"失败伪装成功"）
+        prefix = HK_STATEMENT_PREFIX.get(statement)
+        if prefix is not None:
+            if not isinstance(stmts, dict):
+                raise ProviderDataEmpty(f"港股 {statement} 报表缺失")
+            if not any(str(k).startswith(prefix) for k in stmts):
+                raise ProviderDataEmpty(f"港股 {statement} 报表不存在（现有: {sorted(str(k) for k in stmts)}）")
+        elif not (out.get("指标估值") or stmts or out.get("财务摘要")):
             raise ProviderDataEmpty("港股 F10 无可信数据")
         return out
     raise MktDataError(f"未知源: {src}")
@@ -211,9 +226,14 @@ def execute_indicators(code, report, requested="auto"):
     return None, (chain[-1] if chain else "none"), (fallback or None)
 
 
-def latest_fiscal_year(code) -> Optional[int]:
-    """最新会计年度：优先 hithink income 年报，失败用 miniQMT（FY 解析统一走 normalize）。"""
-    for src in ("hithink", "miniqmt"):
+def latest_fiscal_year(code, requested="auto") -> Optional[int]:
+    """最新会计年度（Blocker C：尊重 forced source）。
+
+    source=auto → hithink→miniqmt；source=hithink → 仅 hithink；source=miniqmt → 仅 miniQMT。
+    """
+    market = _market_of(code)
+    chain = resolve_indicators(market, requested)
+    for src in chain:
         try:
             rows = (P.hithink_financial(code, "income", "annual", 1) if src == "hithink"
                     else P.miniqmt_financial(code, "income", "annual", 1))

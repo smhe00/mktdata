@@ -41,9 +41,9 @@ class MarketData:
         return DataResult(data=rows, source=src, ok=True, requested_source=source, fallback_chain=fb)
 
     def indicators(self, code, report=None, source="auto") -> DataResult:
-        """财务指标（A股 hithink→miniqmt）。report 缺省自动取最新年报（如 '2025-4'）。"""
+        """财务指标（A股 hithink→miniqmt）。report 缺省自动取最新年报（如 '2025-4'，尊重 forced source）。"""
         if not report:
-            fy = router.latest_fiscal_year(code)
+            fy = router.latest_fiscal_year(code, requested=source)
             if not fy:
                 raise MktDataError(f"indicators {code}: 无法确定最新报告期")
             report = f"{fy}-4"
