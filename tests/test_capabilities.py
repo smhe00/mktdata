@@ -40,3 +40,14 @@ def test_capabilities_static_dict():
     all_caps = {c for prov in PROVIDER_CAPABILITIES.values() for c in prov}
     assert {"history", "financial", "indicators", "valuation",
             "calendar", "instrument", "corporate_actions", "sector"} <= all_caps
+
+
+def test_empty_metadata_capability():
+    """第二轮 blocker：capability 存在但 metadata={} 必须为 True；不存在才 False。"""
+    assert supports("miniqmt", "instrument") is True
+    assert supports("miniqmt", "corporate_actions") is True
+    assert supports("miniqmt", "sector") is True
+    assert supports("miniqmt", "backtest") is False
+    assert supports("unknown", "instrument") is False
+    # 空 metadata 能力带 market 过滤不应误伤
+    assert supports("miniqmt", "sector", market="CN") is True

@@ -43,9 +43,13 @@ PROVIDER_CAPABILITIES = {
 
 
 def supports(provider, capability, market=None, period=None) -> bool:
-    """查询某 provider 是否支持某能力（可再按 market / period 过滤）。未知一律 False。"""
-    cap = PROVIDER_CAPABILITIES.get(provider, {}).get(capability)
-    if not cap:
+    """查询某 provider 是否支持某能力（可再按 market / period 过滤）。
+
+    区分「capability 不存在」(False) 与「capability 存在但 metadata={}」(True，
+    如 miniQMT 的 instrument/corporate_actions/sector 无额外过滤元数据)。未知 provider 一律 False。
+    """
+    cap = PROVIDER_CAPABILITIES.get(provider, {}).get(capability, None)
+    if cap is None:
         return False
     if market is not None and cap.get("markets") is not None and market not in cap["markets"]:
         return False
