@@ -1,0 +1,75 @@
+name: windows-clean-install-audit
+
+on:
+  push:
+    branches:
+      - audit/clean-install-public
+
+jobs:
+  windows-clean:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        install-mode: [core, public]
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clone into blank directory and install exactly as README
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'mktdata-empty'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          New-Item -ItemType Directory -Path $root | Out-Null
+          if ((Get-ChildItem $root).Count -ne 0) { throw 'directory is not blank' }
+          Set-Location $root
+          git clone https://github.com/smhe00/mktdata.git repo
+          Set-Location repo
+          git checkout 50f32fce8160cbd935766ba5caba78ce6d026e64
+          if ((git rev-parse HEAD).Trim() -ne '50f32fce8160cbd935766ba5caba78ce6d026e64') { throw 'wrong HEAD' }
+          python -m venv ..\venv
+          $py = Join-Path $root 'venv\Scripts\python.exe'
+          $cli = Join-Path $root 'venv\Scripts\mktdata.exe'
+          & $py -m pip install --upgrade pip
+          if ('${{ matrix.install-mode }}' -eq 'public') { & $py -m pip install '.[public]' } else { & $py -m pip install . }
+          & $py -m pip check
+          & $cli --help | Select-Object -First 12
+
+      - name: Windows live smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'mktdata-empty'
+          $py = Join-Path $root 'venv\Scripts\python.exe'
+          $mode = '${{ matrix.install-mode }}'
+          $code = @'
+          import importlib.util, os
+          from mktdata import MarketData
+          from mktdata.providers.hithink import _read_hithink_key
+          md=MarketData()
+          r=md.history('AAPL.US','20260818','20260822')['AAPL.US']
+          assert r.ok and r.source=='yahoo', (r.error,r.fallback_chain)
+          print('[PASS] Windows AAPL auto', r.source, len(r.data))
+          os.environ['HITHINK_FINANCE_API_KEY']='windows_dummy_key'
+          assert _read_hithink_key()=='windows_dummy_key'
+          print('[PASS] Windows hithink env lookup')
+          if os.environ['AUDIT_MODE']=='core':
+              assert importlib.util.find_spec('akshare') is None
+              assert importlib.util.find_spec('easy_tdx') is None
+              print('[PASS] Windows core has no public extras')
+          else:
+              assert importlib.util.find_spec('akshare') is not None
+              assert importlib.util.find_spec('easy_tdx') is not None
+              hk=md.history('00700.HK','20260818','20260822',source='sina')['00700.HK']
+              assert hk.ok and hk.source=='sina' and hk.data
+              print('[PASS] Windows Sina HK', len(hk.data))
+              cn=md.history('600519.SH','20260818','20260822',source='tdx')['600519.SH']
+              assert cn.ok and cn.source=='tdx' and cn.data
+              print('[PASS] Windows TDX CN', len(cn.data))
+          '@
+          $env:AUDIT_MODE = $mode
+          $code | & $py -
