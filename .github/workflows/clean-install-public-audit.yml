@@ -1,0 +1,216 @@
+name: clean-install-public-audit
+
+on:
+  push:
+    branches:
+      - audit/clean-install-public
+
+jobs:
+  clean-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+        install-mode: ["core", "public"]
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Clone into a blank directory
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/mktdata-empty
+          mkdir -p /tmp/mktdata-empty
+          cd /tmp/mktdata-empty
+          test -z "$(ls -A .)"
+          git clone https://github.com/smhe00/mktdata.git repo
+          cd repo
+          git checkout 50f32fce8160cbd935766ba5caba78ce6d026e64
+          test "$(git rev-parse HEAD)" = "50f32fce8160cbd935766ba5caba78ce6d026e64"
+
+      - name: Install exactly as README
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd /tmp/mktdata-empty/repo
+          python -m venv ../venv
+          ../venv/bin/python -m pip install --upgrade pip
+          if [ "${{ matrix.install-mode }}" = "public" ]; then
+            ../venv/bin/python -m pip install ".[public]"
+          else
+            ../venv/bin/python -m pip install .
+          fi
+          ../venv/bin/python -m pip check
+          ../venv/bin/python -c "from mktdata import MarketData, supports; print('IMPORT_OK', supports('yahoo','history',market='US',period='1d'))"
+          ../venv/bin/mktdata --help >/tmp/mktdata-help.txt
+          head -20 /tmp/mktdata-help.txt
+
+      - name: Core clean-room smoke and live Yahoo test
+        if: matrix.install-mode == 'core'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          V=/tmp/mktdata-empty/venv/bin
+          "$V/python" - <<'PY'
+          import importlib.util
+          from mktdata import MarketData
+          from mktdata.errors import InvalidSymbol
+
+          assert importlib.util.find_spec('akshare') is None, 'core install unexpectedly includes akshare'
+          assert importlib.util.find_spec('easy_tdx') is None, 'core install unexpectedly includes easy_tdx'
+          md = MarketData()
+
+          r = md.history('AAPL.US', '20260818', '20260822')['AAPL.US']
+          assert r.ok, f'Yahoo/core first-run failed: {r.error}; chain={r.fallback_chain}'
+          assert r.source == 'yahoo', f'core first-run expected yahoo, got {r.source}'
+          assert r.data and all(k in r.data[0] for k in ('symbol','datetime','open','high','low','close','volume','amount','source'))
+          print('[PASS] core install + README AAPL first-run:', r.source, len(r.data))
+
+          try:
+              md.history('700.HK', '20260818', '20260822')
+          except InvalidSymbol:
+              print('[PASS] invalid HK symbol raises InvalidSymbol')
+          else:
+              raise AssertionError('700.HK should raise InvalidSymbol')
+          PY
+
+      - name: Public providers comprehensive live test (miniQMT intentionally absent)
+        if: matrix.install-mode == 'public'
+        shell: bash
+        env:
+          HITHINK_FINANCE_API_KEY: ""
+        run: |
+          set -euxo pipefail
+          V=/tmp/mktdata-empty/venv/bin
+          "$V/python" - <<'PY'
+          import importlib.util
+          import os
+          from mktdata import MarketData
+          from mktdata.errors import MktDataError, InvalidParameter, InvalidSymbol
+          from mktdata.providers.hithink import _read_hithink_key
+
+          failures=[]
+          def check(name, fn):
+              try:
+                  detail=fn()
+                  print(f'[PASS] {name}: {detail}')
+              except Exception as e:
+                  failures.append((name, repr(e)))
+                  print(f'[FAIL] {name}: {e!r}')
+
+          assert importlib.util.find_spec('akshare') is not None
+          assert importlib.util.find_spec('easy_tdx') is not None
+          assert importlib.util.find_spec('pandas') is not None
+          assert importlib.util.find_spec('xtquant') is None, 'audit runner must not have miniQMT/xtquant'
+          md=MarketData()
+
+          def yahoo():
+              r=md.history('AAPL.US','20260818','20260822',source='yahoo')['AAPL.US']
+              assert r.ok and r.source=='yahoo' and len(r.data)>0, (r.error,r.fallback_chain)
+              return f'{len(r.data)} rows'
+          check('Yahoo US daily forced source', yahoo)
+
+          def sina_hk():
+              r=md.history('00700.HK','20260818','20260822',source='sina')['00700.HK']
+              assert r.ok and r.source=='sina' and len(r.data)>0, (r.error,r.fallback_chain)
+              return f'{len(r.data)} rows, close={r.data[-1]["close"]}'
+          check('Sina/AkShare HK daily forced source', sina_hk)
+
+          def sina_us():
+              r=md.history('AAPL.US','20260818','20260822',source='sina')['AAPL.US']
+              assert r.ok and r.source=='sina' and len(r.data)>0, (r.error,r.fallback_chain)
+              return f'{len(r.data)} rows'
+          check('Sina/AkShare US daily forced source', sina_us)
+
+          def tdx_cn():
+              r=md.history('600519.SH','20260818','20260822',source='tdx')['600519.SH']
+              assert r.ok and r.source=='tdx' and len(r.data)>0, (r.error,r.fallback_chain)
+              return f'{len(r.data)} rows, volume={r.data[-1]["volume"]}'
+          check('TDX CN daily forced source', tdx_cn)
+
+          def auto_cn_without_mq_key():
+              r=md.history('600519.SH','20260818','20260822')['600519.SH']
+              assert r.ok, (r.error,r.fallback_chain)
+              assert r.source=='tdx', f'expected TDX fallback with no xtquant/no hithink key, got {r.source}; {r.fallback_chain}'
+              sources=[x['source'] for x in (r.fallback_chain or [])]
+              assert sources[:2]==['miniqmt','hithink'], sources
+              return f'source={r.source}, fallback={sources}'
+          check('CN auto fallback without miniQMT/hithink key', auto_cn_without_mq_key)
+
+          def auto_hk_without_mq():
+              r=md.history('00700.HK','20260818','20260822')['00700.HK']
+              assert r.ok and r.source=='sina', (r.error,r.fallback_chain)
+              sources=[x['source'] for x in (r.fallback_chain or [])]
+              assert sources and sources[0]=='miniqmt', sources
+              return f'source={r.source}, fallback={sources}'
+          check('HK auto fallback without miniQMT', auto_hk_without_mq)
+
+          def hk_financial():
+              r=md.financial('00700.HK',statement='income',period='annual',limit=1,source='akshare')
+              assert r.ok and r.source=='akshare' and r.data, r
+              return 'income available'
+          check('HK financial via AkShare/Eastmoney', hk_financial)
+
+          def hk_valuation():
+              r=md.valuation('00700.HK',source='akshare')
+              assert r.ok and r.source=='akshare' and isinstance(r.data,dict), r
+              assert r.data.get('pe_ttm') is not None or r.data.get('pb_mrq') is not None, r.data
+              return str(r.data)
+          check('HK valuation via AkShare/Eastmoney', hk_valuation)
+
+          def cn_valuation_tdx():
+              r=md.valuation('600519.SH',source='tdx')
+              assert r.ok and r.source=='tdx' and r.data.get('pb_mrq') is not None, r.data
+              return f'PB={r.data.get("pb_mrq")}'
+          check('CN valuation via TDX', cn_valuation_tdx)
+
+          def cn_financial_expected_fail():
+              try:
+                  md.financial('600519.SH',statement='income',period='annual',limit=1)
+              except MktDataError:
+                  return 'expected MktDataError (no miniQMT, no hithink key)'
+              raise AssertionError('CN financial unexpectedly succeeded without miniQMT/key')
+          check('CN financial graceful failure without configured source', cn_financial_expected_fail)
+
+          def hithink_env_lookup():
+              os.environ['HITHINK_FINANCE_API_KEY']='dummy_audit_key'
+              try:
+                  assert _read_hithink_key()=='dummy_audit_key'
+              finally:
+                  os.environ.pop('HITHINK_FINANCE_API_KEY',None)
+              return 'environment variable recognized'
+          check('hithink API-key environment lookup', hithink_env_lookup)
+
+          def validation():
+              try:
+                  md.history('700.HK','20260818','20260822')
+              except InvalidSymbol:
+                  pass
+              else:
+                  raise AssertionError('InvalidSymbol missing')
+              try:
+                  md.history('AAPL.US','20260822','20260818')
+              except InvalidParameter:
+                  pass
+              else:
+                  raise AssertionError('InvalidParameter missing')
+              return 'InvalidSymbol + InvalidParameter'
+          check('public API validation', validation)
+
+          if failures:
+              print('\nLIVE TEST FAILURES:')
+              for n,e in failures: print('-',n,e)
+              raise SystemExit(1)
+          print('\nALL PUBLIC LIVE TESTS PASSED')
+          PY
+
+      - name: CLI live smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          V=/tmp/mktdata-empty/venv/bin
+          "$V/mktdata" history --codes AAPL.US --start 20260818 --end 20260822 --adjust none
