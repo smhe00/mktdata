@@ -18,16 +18,18 @@ from .normalize import extract_fiscal_year, normalize_history_rows
 from .symbols import normalize_symbol
 
 # ---- 源链定义（顺序 = fallback 顺序）----
+# 原则（README R9）：本地 miniQMT 可用时优先（本地终端、延迟低、A股/港股覆盖全），
+# 不可用时再 fallback 到 hithink/TDX 等公网源。
 HISTORY_CHAINS = {
-    ("CN", "1d"): ["hithink", "miniqmt", "tdx"],
+    ("CN", "1d"): ["miniqmt", "hithink", "tdx"],
     ("CN", "minute"): ["miniqmt", "tdx"],
     ("HK", "1d"): ["miniqmt", "sina"],
-    ("US", "1d"): ["yahoo", "sina"],
+    ("US", "1d"): ["yahoo", "sina"],  # miniQMT 当前不支持 US
 }
-FINANCIAL_CHAINS = {"CN": ["hithink", "miniqmt"], "HK": ["akshare"]}
-VALUATION_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"], "HK": ["akshare"]}
-CROSSCHECK_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"]}
-INDICATORS_CHAINS = {"CN": ["hithink", "miniqmt"]}
+FINANCIAL_CHAINS = {"CN": ["miniqmt", "hithink"], "HK": ["akshare"]}
+VALUATION_CHAINS = {"CN": ["miniqmt", "hithink", "tdx"], "HK": ["akshare"]}
+CROSSCHECK_CHAINS = {"CN": ["hithink", "miniqmt", "tdx"]}  # crosscheck 是主动对账，非 fallback，不改
+INDICATORS_CHAINS = {"CN": ["miniqmt", "hithink"]}
 
 # 港股 F10「三大报表」键前缀 → 目标 statement（Blocker B）
 HK_STATEMENT_PREFIX = {

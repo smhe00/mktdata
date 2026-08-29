@@ -8,7 +8,8 @@ from mktdata.errors import ProviderUnavailable
 
 
 def test_resolve_history_chains():
-    assert router.resolve_history("CN", "1d") == ["hithink", "miniqmt", "tdx"]
+    # R9：本地 miniQMT 优先
+    assert router.resolve_history("CN", "1d") == ["miniqmt", "hithink", "tdx"]
     assert router.resolve_history("CN", "5m") == ["miniqmt", "tdx"]
     assert router.resolve_history("CN", "1m") == ["miniqmt", "tdx"]
     assert router.resolve_history("HK", "1d") == ["miniqmt", "sina"]
@@ -16,9 +17,9 @@ def test_resolve_history_chains():
 
 
 def test_resolve_financial_valuation():
-    assert router.resolve_financial("CN") == ["hithink", "miniqmt"]
+    assert router.resolve_financial("CN") == ["miniqmt", "hithink"]
     assert router.resolve_financial("HK") == ["akshare"]
-    assert router.resolve_valuation("CN") == ["hithink", "miniqmt", "tdx"]
+    assert router.resolve_valuation("CN") == ["miniqmt", "hithink", "tdx"]
     assert router.resolve_valuation("HK") == ["akshare"]
 
 
@@ -33,21 +34,21 @@ def test_execute_history_fallback(monkeypatch):
 
     def fake_call(src, code, start, end, period, adjust):
         calls.append(src)
-        if src == "hithink":
-            raise ProviderUnavailable("hithink 失败")
         if src == "miniqmt":
+            raise ProviderUnavailable("miniQMT 失败")
+        if src == "hithink":
             return [{"date": "2026-01-02", "close": 1.0}]
         raise ProviderUnavailable("?")
 
     monkeypatch.setattr(router, "_call_history", fake_call)
     res = router.execute_history("600519.SH", "20260101", "20260110")
     assert res.ok is True
-    assert res.source == "miniqmt"
-    assert calls == ["hithink", "miniqmt"]
-    assert res.fallback_chain[0]["source"] == "hithink"
+    assert res.source == "hithink"
+    assert calls == ["miniqmt", "hithink"]
+    assert res.fallback_chain[0]["source"] == "miniqmt"
     assert res.fallback_chain[0]["error_type"] == "ProviderUnavailable"
     assert res.data[0]["symbol"] == "600519.SH"  # canonical（P0-1）
-    assert res.data[0]["source"] == "miniqmt"
+    assert res.data[0]["source"] == "hithink"
 
 
 def test_execute_history_all_fail(monkeypatch):
@@ -68,14 +69,14 @@ def test_execute_valuation_fallback(monkeypatch):
 
     def fake_call(src, code):
         calls.append(src)
-        if src == "hithink":
-            raise ProviderUnavailable("hithink 失败")
         if src == "miniqmt":
+            raise ProviderUnavailable("miniQMT 失败")
+        if src == "hithink":
             return {"pe_ttm": 20.0, "pb_mrq": 6.0}
         raise ProviderUnavailable("?")
 
     monkeypatch.setattr(router, "_call_valuation", fake_call)
     row, src, fb = router.execute_valuation("600519.SH")
-    assert src == "miniqmt"
+    assert src == "hithink"
     assert row["pe_ttm"] == 20.0
-    assert fb[0]["source"] == "hithink"
+    assert fb[0]["source"] == "miniqmt"

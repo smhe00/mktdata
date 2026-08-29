@@ -8,16 +8,16 @@
 
 ## 能做什么
 
-| 你要的数据 | 可用 |
+| 你要的数据 | 支持范围 |
 |---|---|
-| 历史行情（日线 / 分钟 1m·5m·15m·30m·60m） | ✅ |
-| 财务报表（利润表 / 资产负债表 / 现金流量表） | ✅ |
-| 估值（PE / PB / PS / PCF） | ✅ |
-| 财务指标（成长 / 盈利 / 偿债） | ✅ |
-| 交易日历 | ✅ |
-| 证券资料 | ✅ |
-| 分红送转 | ✅ |
-| 板块成分 | ✅ |
+| 历史行情（日线 / 分钟 1m·5m·15m·30m·60m） | A股 / 港股 / 美股 |
+| 财务报表（利润表 / 资产负债表 / 现金流量表） | A股 / 港股 |
+| 估值（PE / PB / PS / PCF，字段随数据源而异） | A股 / 港股 |
+| 财务指标（成长 / 盈利 / 偿债） | A股 |
+| 交易日历 | miniQMT：SH / SZ / HK |
+| 证券资料 | miniQMT |
+| 分红送转 | miniQMT |
+| 板块成分 | miniQMT |
 
 ---
 
@@ -28,20 +28,20 @@
 **① 大多数人（推荐）——公开数据源全要**
 
 ```bash
-python -m pip install "mktdata[public]"
-```
-
-可用新浪(AkShare)、通达信(TDX) 等公开数据源。本地安装：
-
-```bash
-git clone <本仓库地址>
+git clone https://gitee.com/smhe/mktdata.git   # 或 GitHub 镜像 https://github.com/smhe00/mktdata.git
 cd mktdata
 python -m pip install ".[public]"
 ```
 
+可用新浪(AkShare)、通达信(TDX) 等公开数据源。
+
+> 尚未发布到 PyPI 前，请从仓库安装；发布后可直接 `python -m pip install "mktdata[public]"`。
+
 **② 最小安装——只想先试试**
 
 ```bash
+git clone https://gitee.com/smhe/mktdata.git
+cd mktdata
 python -m pip install .
 ```
 
@@ -56,8 +56,10 @@ python -m pip install .
 **④ 开发者**
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[public,dev]"
 ```
+
+可跑离线单测 + 公开数据源集成；`miniQMT / xtquant` 仍需单独配置。若只做核心开发，`-e ".[dev]"` 是最小开发环境。
 
 ---
 
@@ -71,8 +73,11 @@ from mktdata import MarketData
 md = MarketData()
 r = md.history("AAPL.US", "20260101", "20260110")["AAPL.US"]
 
-print("数据来自:", r.source)   # 实际命中的数据源
-print(r.data[:3])              # 前 3 根 K 线
+if not r.ok:
+    print("获取失败:", r.error)      # 网络不可用时不会崩，返回 ok=False
+else:
+    print("数据来自:", r.source)     # 实际命中的数据源
+    print(r.data[:3])                # 前 3 根 K 线
 ```
 
 说明：
@@ -88,7 +93,7 @@ print(r.data[:3])              # 前 3 根 K 线
 |---|---|
 | 沪市 | `600519.SH` |
 | 深市 | `000858.SZ` |
-| 北交所 | `xxxxxx.BJ` |
+| 北交所 | `920002.BJ`（6 位数字 `.BJ`） |
 | 港股 | `00700.HK` |
 | 美股 | `AAPL.US` |
 
@@ -143,24 +148,48 @@ md.crosscheck(["600519.SH"], ...)   # 多源对账（调试用）
 
 ## 我需要配置哪个数据源？
 
+> 如果本机已经安装并运行 miniQMT，mktdata 会**优先使用 miniQMT**；miniQMT 不可用时，再自动切换到 hithink、TDX 或其他公网数据源。
+
 按"我要什么数据"来看：
 
 | 我想获取 | 最简单配置 | auto 时的数据源 |
 |---|---|---|
 | 美股日线 | 最小安装即可 | Yahoo → Sina |
-| 港股日线 | `.[public]` | miniQMT → Sina |
-| A股日线 | `.[public]`（可先用 TDX） | hithink → miniQMT → TDX |
+| 港股日线 | `.[public]` 即可用 Sina；有 miniQMT 时优先 miniQMT | miniQMT → Sina |
+| A股日线 | 有 miniQMT 优先；否则 `.[public]` 用 TDX | miniQMT → hithink → TDX |
 | 港股财务 / 估值 | `.[public]` | AkShare/Eastmoney |
-| A股财务 / 估值 | hithink 或 miniQMT | hithink → miniQMT |
+| A股财务 | hithink 或 miniQMT | miniQMT → hithink |
+| A股估值 | hithink / miniQMT；公开源可退到 TDX（主要 PB） | miniQMT → hithink → TDX |
 | 日历 / 证券资料 / 分红 / 板块 | miniQMT | miniQMT |
 
-**hithink**（同花顺，A股行情/财务/估值的主要源）需要 API Key：
+**hithink**（同花顺官方 A 股数据）需要 API Key，配置见下。
 
-在 `%APPDATA%\hithink-finance\credentials.env` 写入：
+### hithink（同花顺官方 A 股数据）
 
+mktdata 直接调用 hithink REST API，**不需要另外安装 hithink Python 包或 CLI**。
+
+1. 打开同花顺金融数据服务创建 API Key：`https://fuyao.aicubes.cn/admin/`
+2. 配置 API Key（二选一）：
+
+**方式 A：环境变量（推荐，官方统一约定）**
+
+```powershell
+[Environment]::SetEnvironmentVariable("HITHINK_FINANCE_API_KEY", "你的_API_Key", "User")
 ```
-HITHINK_FINANCE_API_KEY=你的key
+
+重新打开终端后生效。（macOS/Linux 写入 `~/.bashrc` / `~/.zshrc`：`export HITHINK_FINANCE_API_KEY=你的_API_Key`）
+
+**方式 B：用户级凭据文件** `credentials.env`，内容 `HITHINK_FINANCE_API_KEY=你的_API_Key`：
+
+```text
+Windows:  %APPDATA%\hithink-finance\credentials.env
+macOS:    ~/Library/Application Support/hithink-finance/credentials.env
+Linux:    ${XDG_CONFIG_HOME:-~/.config}/hithink-finance/credentials.env
 ```
+
+> 不要把 API Key 提交到 Git。
+
+> hithink 官方另有独立 CLI（`npm install -g @hithink-tech/hithink-finance-cli`，需 Node.js ≥22.12）——**这不是使用 mktdata 的前置条件**，可忽略。
 
 **miniQMT** 详见 `references/setup.md`（需终端运行 + 可 import xtquant）。
 
@@ -205,17 +234,17 @@ else:
 
 ## 自动 fallback
 
-`source="auto"`（默认）时的切换顺序：
+`source="auto"`（默认）时的切换顺序（**本地 miniQMT 可用时优先**）：
 
 | 请求 | auto 顺序 |
 |---|---|
-| A股日线 | hithink → miniQMT → TDX |
+| A股日线 | miniQMT → hithink → TDX |
 | A股分钟 | miniQMT → TDX |
 | 港股日线 | miniQMT → Sina |
 | 美股日线 | Yahoo → Sina |
-| A股财务 | hithink → miniQMT |
+| A股财务 | miniQMT → hithink |
 | 港股财务 | AkShare/Eastmoney |
-| A股估值 | hithink → miniQMT → TDX |
+| A股估值 | miniQMT → hithink → TDX |
 | 港股估值 | AkShare/Eastmoney |
 
 ---
@@ -269,6 +298,8 @@ symbol, datetime, open, high, low, close, volume, amount, source
 - 缺失值：`None` / `NaN`
 - `adjust`：`none`（原始价）/ `front`（前复权）/ `back`（后复权）
 - 周期：`1d / 1m / 5m / 15m / 30m / 60m`
+
+> 估值字段随数据源而异：A股主要 PE/PB/PS/PCF，港股目前主要 PE/PB，TDX 兜底主要 PB。**不可得字段返回 `None`**，不要假设 `valuation()` 成功就四个字段都在。
 
 ---
 

@@ -8,6 +8,7 @@
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.request
 
@@ -43,13 +44,36 @@ HITHINK_IND = {
 }
 
 
+def _key_file_candidates():
+    """当前平台用户级 credentials.env 候选路径（R10：与官方跨平台约定一致）。"""
+    paths = []
+    ap = os.environ.get("APPDATA")  # Windows
+    if ap:
+        paths.append(os.path.join(ap, "hithink-finance", "credentials.env"))
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        paths.append(os.path.join(home, "Library", "Application Support", "hithink-finance", "credentials.env"))
+    else:  # Linux / 其它
+        cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+        paths.append(os.path.join(cfg, "hithink-finance", "credentials.env"))
+    return paths
+
+
 def _read_hithink_key():
-    try:
-        with open(HITHINK_KEY_FILE, "r", encoding="utf-8") as f:
-            m = re.search(r"^HITHINK_FINANCE_API_KEY=(.+)$", f.read(), re.M)
-        return m.group(1).strip() if m else None
-    except Exception:
-        return None
+    # 1. 官方环境变量优先（HITHINK_FINANCE_API_KEY）
+    key = os.environ.get("HITHINK_FINANCE_API_KEY")
+    if key:
+        return key.strip()
+    # 2. 当前平台用户级 credentials.env（兼容现有 Windows %APPDATA% 路径）
+    for path in _key_file_candidates():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                m = re.search(r"^HITHINK_FINANCE_API_KEY=(.+)$", f.read(), re.M)
+            if m:
+                return m.group(1).strip()
+        except Exception:
+            continue
+    return None
 
 
 def _raise_biz(code, message):

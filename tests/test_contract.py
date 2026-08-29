@@ -27,7 +27,7 @@ def test_history_canonical_schema(monkeypatch):
     assert set(row.keys()) == set(models.HISTORY_FIELDS)
     assert row["symbol"] == "600519.SH"
     assert row["datetime"] == "2026-08-20"
-    assert row["source"] == "hithink"
+    assert row["source"] == "miniqmt"  # R9：链首 miniQMT 优先
     assert res.requested_source == "auto"
 
 
@@ -41,17 +41,19 @@ def test_normalize_history_rows_missing_value():
 
 
 def test_error_propagation_error_type(monkeypatch):
-    """P0-3：provider 抛结构化异常 → router 记录 error_type。"""
+    """P0-3：provider 抛结构化异常 → router 记录 error_type（R9 miniQMT-first 顺序）。"""
     def fake_call(src, code, start, end, period, adjust):
-        if src == "hithink":
-            raise ProviderUnavailable("hithink timeout")
         if src == "miniqmt":
-            raise ProviderDataEmpty("miniQMT 空")
+            raise ProviderUnavailable("miniQMT timeout")
+        if src == "hithink":
+            raise ProviderDataEmpty("hithink 空")
         return [{"date": "2026-01-02", "close": 1.0}]
     monkeypatch.setattr(router, "_call_history", fake_call)
     res = router.execute_history("600519.SH", "20260101", "20260110")
     assert res.source == "tdx"
+    assert res.fallback_chain[0]["source"] == "miniqmt"
     assert res.fallback_chain[0]["error_type"] == "ProviderUnavailable"
+    assert res.fallback_chain[1]["source"] == "hithink"
     assert res.fallback_chain[1]["error_type"] == "ProviderDataEmpty"
 
 
@@ -114,21 +116,21 @@ def test_extract_fiscal_year():
 
 
 def test_indicators_fallback_in_router(monkeypatch):
-    """9.3：indicators fallback（hithink 失败 → miniQMT 成功）由 router 承担，CLI 不自己 fallback。"""
+    """9.3：indicators fallback（R9 miniQMT 优先；miniQMT 失败 → hithink）由 router 承担，CLI 不自己 fallback。"""
     def fake_call(src, code, report):
-        if src == "hithink":
-            raise ProviderUnavailable("hithink 挂")
+        if src == "miniqmt":
+            raise ProviderUnavailable("miniQMT 挂")
         return {"period": "FY2025", "roe": 20.0}
     monkeypatch.setattr(router, "_call_indicators", fake_call)
     row, src, fb = router.execute_indicators("600519.SH", "2025-4")
-    assert src == "miniqmt"
+    assert src == "hithink"
     assert row["roe"] == 20.0
-    assert fb[0]["source"] == "hithink"
+    assert fb[0]["source"] == "miniqmt"
     # MarketData.indicators 走同一 router
     md = api.MarketData()
     monkeypatch.setattr(router, "latest_fiscal_year", lambda code, requested="auto": 2025)
     r = md.indicators("600519.SH")
-    assert r.source == "miniqmt"
+    assert r.source == "hithink"
     assert r.data["period"] == "FY2025"
 
 
@@ -239,18 +241,18 @@ def test_indicators_forced_source_fy_phase(monkeypatch):
     assert calls["hh_fin"] == 1
     assert r2.source == "hithink"
 
-    # Case 3: source=auto → hithink 失败回 miniQMT
-    def fake_hh_fail(code, statement, period, limit):
-        calls["hh_fin"] += 1
-        raise ProviderUnavailable("hithink 挂")
-    monkeypatch.setattr(router.P, "hithink_financial", fake_hh_fail)
+    # Case 3: source=auto → miniQMT 优先；miniQMT 失败 → hithink（R9）
+    def fake_mq_fail(code, statement, period, limit):
+        calls["mq_fin"] += 1
+        raise ProviderUnavailable("miniQMT 挂")
+    monkeypatch.setattr(router.P, "miniqmt_financial", fake_mq_fail)
 
     def fake_call_auto(src, code, report):
-        if src == "hithink":
-            raise ProviderUnavailable("hithink 挂")
+        if src == "miniqmt":
+            raise ProviderUnavailable("miniQMT 挂")
         return {"period": "FY2025", "roe": 20.0}
     monkeypatch.setattr(router, "_call_indicators", fake_call_auto)
     calls["hh_fin"] = 0; calls["mq_fin"] = 0
     r3 = md.indicators("600519.SH", report=None, source="auto")
-    assert calls["hh_fin"] >= 1 and calls["mq_fin"] >= 1
-    assert r3.source == "miniqmt"
+    assert calls["mq_fin"] >= 1 and calls["hh_fin"] >= 1  # FY 阶段 miniQMT 失败 → hithink
+    assert r3.source == "hithink"
