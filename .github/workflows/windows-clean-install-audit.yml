@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Clone into blank directory and install exactly as README
+      - name: Clone into blank directory and install exactly as README (UTF-8 workaround only for known CLI bug)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -37,6 +37,9 @@ jobs:
           & $py -m pip install --upgrade pip
           if ('${{ matrix.install-mode }}' -eq 'public') { & $py -m pip install '.[public]' } else { & $py -m pip install . }
           & $py -m pip check
+          # Known product issue discovered by previous clean-room run: default cp1252 stdout cannot encode Chinese help.
+          # This env var is an audit-only workaround so provider tests can continue; main code remains unchanged.
+          $env:PYTHONUTF8 = '1'
           & $cli --help | Select-Object -First 12
 
       - name: Windows live smoke
@@ -46,6 +49,7 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP 'mktdata-empty'
           $py = Join-Path $root 'venv\Scripts\python.exe'
           $mode = '${{ matrix.install-mode }}'
+          $env:PYTHONUTF8 = '1'
           $code = @'
           import importlib.util, os
           from mktdata import MarketData
