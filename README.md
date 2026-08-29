@@ -156,40 +156,52 @@ md.crosscheck(["600519.SH"], ...)   # 多源对账（调试用）
 |---|---|---|
 | 美股日线 | 最小安装即可 | Yahoo → Sina |
 | 港股日线 | `.[public]` 即可用 Sina；有 miniQMT 时优先 miniQMT | miniQMT → Sina |
-| A股日线 | 有 miniQMT 优先；否则 `.[public]` 用 TDX | miniQMT → hithink → TDX |
-| 港股财务 / 估值 | `.[public]` | AkShare/Eastmoney |
-| A股财务 | hithink 或 miniQMT | miniQMT → hithink |
-| A股估值 | hithink / miniQMT；公开源可退到 TDX（主要 PB） | miniQMT → hithink → TDX |
+| A股日线 | 有 miniQMT 优先；否则 `.[public]` 可使用 TDX；配置 hithink 后增加一层官方源 | miniQMT → hithink → TDX |
+| 港股财务 / 估值 | `.[public]` | AkShare / Eastmoney |
+| A股财务 | miniQMT 或 hithink | miniQMT → hithink |
+| A股估值 | miniQMT / hithink；无二者时可退到 TDX（主要 PB） | miniQMT → hithink → TDX |
+| A股财务指标 | miniQMT 或 hithink | miniQMT → hithink |
 | 日历 / 证券资料 / 分红 / 板块 | miniQMT | miniQMT |
 
-**hithink**（同花顺官方 A 股数据）需要 API Key，配置见下。
+**hithink**（同花顺官方 A 股数据，可选）配置见下。
 
-### hithink（同花顺官方 A 股数据）
+### hithink（同花顺官方 A 股数据，可选）
 
-mktdata 直接调用 hithink REST API，**不需要另外安装 hithink Python 包或 CLI**。
+mktdata 可直接调用同花顺官方 **Financial API** 获取 A 股行情、财务、指标和估值数据。
 
-1. 打开同花顺金融数据服务创建 API Key：`https://fuyao.aicubes.cn/admin/`
-2. 配置 API Key（二选一）：
+**使用 mktdata 不需要另外安装 hithink CLI、Python SDK、MCP 或 Skill。**
 
-**方式 A：环境变量（推荐，官方统一约定）**
+如需启用 hithink：
 
-```powershell
-[Environment]::SetEnvironmentVariable("HITHINK_FINANCE_API_KEY", "你的_API_Key", "User")
-```
-
-重新打开终端后生效。（macOS/Linux 写入 `~/.bashrc` / `~/.zshrc`：`export HITHINK_FINANCE_API_KEY=你的_API_Key`）
-
-**方式 B：用户级凭据文件** `credentials.env`，内容 `HITHINK_FINANCE_API_KEY=你的_API_Key`：
+1. 在同花顺官方服务创建 API Key；
+2. 设置环境变量：
 
 ```text
-Windows:  %APPDATA%\hithink-finance\credentials.env
-macOS:    ~/Library/Application Support/hithink-finance/credentials.env
-Linux:    ${XDG_CONFIG_HOME:-~/.config}/hithink-finance/credentials.env
+HITHINK_FINANCE_API_KEY=你的_API_Key
 ```
 
-> 不要把 API Key 提交到 Git。
+mktdata 会自动读取该变量，并通过官方 REST API 访问数据。
 
-> hithink 官方另有独立 CLI（`npm install -g @hithink-tech/hithink-finance-cli`，需 Node.js ≥22.12）——**这不是使用 mktdata 的前置条件**，可忽略。
+官方项目及最新接入说明：
+
+```text
+https://github.com/HiThink-Tech/Financial-API
+```
+
+REST API 契约：
+
+```text
+https://github.com/HiThink-Tech/Financial-API/tree/main/docs/api
+```
+
+API Key 管理：
+
+```text
+https://fuyao.aicubes.cn/admin/
+```
+
+> API Key 不要写入代码、日志、公开配置或 Git 仓库。
+> hithink 的接口、能力范围、认证方式和错误码，以官方仓库最新说明为准。
 
 **miniQMT** 详见 `references/setup.md`（需终端运行 + 可 import xtquant）。
 
@@ -253,7 +265,7 @@ else:
 
 **A 股为什么取不到数据？**
 
-auto 会依次尝试 hithink → miniQMT → TDX。三者都不可用时 `history()` 返回 `ok=False`（不会崩）。检查：hithink key 是否配置、miniQMT 是否运行、是否装了 `.[public]`。
+auto 会依次尝试 miniQMT → hithink → TDX。三者都不可用时 `history()` 返回 `ok=False`（不会崩）。检查：miniQMT 是否运行、hithink key 是否配置、是否装了 `.[public]`。
 
 **miniQMT 为什么不工作？**
 

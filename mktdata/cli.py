@@ -293,8 +293,20 @@ def cmd_history(args):
     return 0
 
 
+def _configure_stdio():
+    """Windows 部分 locale 下 stdout/pipe 非 UTF-8，含中文帮助会 UnicodeEncodeError。
+    程序自身处理（不要求用户设 PYTHONUTF8 / PYTHONIOENCODING）。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="mktdata", description="hithink 优先、miniQMT 兜底、多源自动路由的行情入口")
+    _configure_stdio()
+    p = argparse.ArgumentParser(prog="mktdata", description="本地 miniQMT 可用时优先，多源自动 fallback 的市场数据入口")
     sub = p.add_subparsers(dest="cmd", required=True)
     h = sub.add_parser("history", help="历史 K 线（统一输出）")
     h.add_argument("--codes", required=True, help="逗号分隔，如 00700.HK,600519.SH")
@@ -307,7 +319,8 @@ def main(argv=None):
     h.add_argument("--json", default=None, help="写入汇总 JSON")
     h.set_defaults(fn=cmd_history)
 
-    f = sub.add_parser("financial", help="财务报表（hithink 优先，miniQMT 兜底；港股走东财 F10）")
+    f = sub.add_parser("financial", help="财务报表（A股：miniQMT→hithink；港股：Eastmoney F10）",
+                       description="财务报表：A股 miniQMT→hithink；港股 Eastmoney F10")
     f.add_argument("--codes", required=True, help="逗号分隔，如 600519.SH,601318.SH")
     f.add_argument("--statement", default="income", choices=["income", "balance", "cashflow", "indicators", "all"])
     f.add_argument("--period", default="annual", choices=["annual", "quarterly"])
@@ -317,7 +330,8 @@ def main(argv=None):
     f.add_argument("--json", default=None)
     f.set_defaults(fn=cmd_financial)
 
-    v = sub.add_parser("valuation", help="估值快照 PE/PB/PS/PCF（hithink 优先，miniQMT 自算兜底）")
+    v = sub.add_parser("valuation", help="估值快照 PE/PB/PS/PCF（A股：miniQMT→hithink→TDX；港股：Eastmoney）",
+                       description="估值：A股 miniQMT→hithink→TDX；港股 Eastmoney")
     v.add_argument("--codes", required=True, help="逗号分隔，如 600519.SH,601318.SH")
     v.add_argument("--source", default="auto", choices=["auto", "hithink", "miniqmt", "tdx"])
     v.add_argument("--json", default=None)
