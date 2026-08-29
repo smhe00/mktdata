@@ -1,0 +1,39 @@
+name: gitee-readme-install-audit
+
+on:
+  push:
+    branches:
+      - audit/clean-install-public
+
+jobs:
+  gitee-readme-path:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Follow README primary Gitee install path from blank directory
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/mktdata-gitee-empty
+          mkdir -p /tmp/mktdata-gitee-empty
+          cd /tmp/mktdata-gitee-empty
+          test -z "$(ls -A .)"
+          git clone https://gitee.com/smhe/mktdata.git repo
+          cd repo
+          echo "GITEE_HEAD=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "50f32fce8160cbd935766ba5caba78ce6d026e64"
+          python -m venv ../venv
+          ../venv/bin/python -m pip install --upgrade pip
+          ../venv/bin/python -m pip install ".[public]"
+          ../venv/bin/python -m pip check
+          ../venv/bin/mktdata --help >/dev/null
+          ../venv/bin/python - <<'PY'
+          from mktdata import MarketData
+          r=MarketData().history('AAPL.US','20260818','20260822')['AAPL.US']
+          assert r.ok, (r.error, r.fallback_chain)
+          print('[PASS] Gitee README path + public install + AAPL first-run', r.source, len(r.data))
+          PY
